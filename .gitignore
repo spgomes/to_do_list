@@ -1,0 +1,40 @@
+# Backend (Go)
+backend/backend
+backend/backend.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+todos.db
+todos.db-wal
+todos.db-shm
+
+# Dependencies
+node_modules/
+
+# Frontend (Node/Vite)
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Test artifacts
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode/
+.claude/

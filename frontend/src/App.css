@@ -1,0 +1,301 @@
+/* ===== App Layout ===== */
+
+.app {
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--spacing-xl) var(--spacing-lg);
+  min-height: 100vh;
+}
+
+/* ===== Header ===== */
+
+.app-header {
+  text-align: center;
+  margin-bottom: var(--spacing-2xl);
+}
+
+.app-title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  letter-spacing: -0.02em;
+}
+
+/* ===== Loading State ===== */
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-2xl) 0;
+  gap: var(--spacing-md);
+}
+
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-text {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* ===== Error State ===== */
+
+.error-banner {
+  background-color: var(--color-error-bg);
+  color: var(--color-error-text);
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-radius: var(--radius-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ===== TodoForm ===== */
+
+.todo-form {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: stretch;
+}
+
+.todo-form-input {
+  flex: 1;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  min-height: 44px;
+}
+
+.todo-form-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.todo-form-input:hover {
+  border-color: var(--color-primary);
+}
+
+.todo-form-input:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  outline: none;
+}
+
+.todo-form-button {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--color-primary);
+  color: #ffffff;
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  transition: background-color var(--transition-fast), transform var(--transition-fast);
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.todo-form-button:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.todo-form-button:active {
+  transform: scale(0.97);
+}
+
+.todo-form-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  outline: none;
+}
+
+.form-error {
+  color: var(--color-error-text);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-sm);
+  padding-left: var(--spacing-xs);
+}
+
+/* ===== TodoList ===== */
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+}
+
+.empty-message {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: var(--spacing-2xl) 0;
+  font-size: var(--font-size-sm);
+}
+
+/* ===== TodoItem ===== */
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.todo-item:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.todo-item.completed {
+  opacity: 0.7;
+}
+
+.todo-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex: 1;
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.todo-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  position: relative;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.todo-checkbox:hover {
+  border-color: var(--color-primary);
+}
+
+.todo-checkbox:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.todo-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  width: 5px;
+  height: 10px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.todo-checkbox:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  outline: none;
+}
+
+.todo-title {
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  word-break: break-word;
+  transition: color var(--transition-fast);
+}
+
+.todo-item.completed .todo-title {
+  text-decoration: line-through;
+  color: var(--color-text-secondary);
+}
+
+.delete-button {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+  min-height: 36px;
+  min-width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-button:hover {
+  background-color: var(--color-error-bg);
+  color: var(--color-danger-hover);
+}
+
+.delete-button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(193, 18, 31, 0.3);
+  outline: none;
+}
+
+/* ===== Responsive: Tablet (768px) ===== */
+
+@media (max-width: 768px) {
+  .app {
+    padding: var(--spacing-lg) var(--spacing-md);
+  }
+
+  .app-title {
+    font-size: var(--font-size-xl);
+  }
+}
+
+/* ===== Responsive: Mobile (480px) ===== */
+
+@media (max-width: 480px) {
+  .app {
+    padding: var(--spacing-md) var(--spacing-sm);
+  }
+
+  .todo-form {
+    flex-direction: column;
+  }
+
+  .todo-form-button {
+    width: 100%;
+    padding: var(--spacing-sm);
+    min-height: 48px;
+  }
+
+  .todo-form-input {
+    min-height: 48px;
+  }
+
+  .todo-item {
+    padding: var(--spacing-sm) var(--spacing-md);
+  }
+
+  .app-header {
+    margin-bottom: var(--spacing-xl);
+  }
+
+  .delete-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
