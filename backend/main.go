@@ -21,10 +21,20 @@ func main() {
 	defer db.Close()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/todos", handleListTodos(db))
-	mux.HandleFunc("POST /api/todos", handleCreateTodo(db))
-	mux.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
-	mux.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+
+	// Auth routes (public)
+	mux.HandleFunc("POST /api/auth/register", handleRegister(db))
+	mux.HandleFunc("POST /api/auth/login", handleLogin(db))
+
+	// Todo routes (protected by JWT middleware)
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/todos", handleListTodos(db))
+	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+
+	mux.Handle("/api/todos", jwtMiddleware(protected))
+	mux.Handle("/api/todos/", jwtMiddleware(protected))
 
 	handler := loggingMiddleware(corsMiddleware(mux))
 

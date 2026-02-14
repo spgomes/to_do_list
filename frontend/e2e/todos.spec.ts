@@ -1,41 +1,251 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
-const API_URL = "http://localhost:8080/api/todos";
+const API_URL = "http://localhost:8080/api";
+
+let userCounter = 0;
+
+function uniqueEmail(): string {
+  userCounter++;
+  return `e2e-user-${Date.now()}-${userCounter}@test.com`;
+}
+
+const TEST_PASSWORD = "password123";
 
 /**
- * Clean all todos via the API before each test to ensure a fresh state.
+ * Register a user via the API and return the token.
+ */
+async function registerViaAPI(
+  request: import("@playwright/test").APIRequestContext,
+  email: string,
+  password: string
+): Promise<string> {
+  const resp = await request.post(`${API_URL}/auth/register`, {
+    data: { email, password },
+  });
+  expect(resp.ok()).toBeTruthy();
+  const body = (await resp.json()) as { token: string };
+  return body.token;
+}
+
+/**
+ * Login a user via the API and return the token.
+ */
+async function loginViaAPI(
+  request: import("@playwright/test").APIRequestContext,
+  email: string,
+  password: string
+): Promise<string> {
+  const resp = await request.post(`${API_URL}/auth/login`, {
+    data: { email, password },
+  });
+  expect(resp.ok()).toBeTruthy();
+  const body = (await resp.json()) as { token: string };
+  return body.token;
+}
+
+/**
+ * Set the token in localStorage and navigate to the home page.
+ */
+async function authenticateInBrowser(page: Page, token: string) {
+  await page.goto("/login");
+  await page.evaluate((t) => localStorage.setItem("token", t), token);
+  await page.goto("/");
+}
+
+/**
+ * Delete all todos for a user via API.
  */
 async function deleteAllTodos(
-  request: import("@playwright/test").APIRequestContext
+  request: import("@playwright/test").APIRequestContext,
+  token: string
 ) {
-  const response = await request.get(API_URL);
+  const response = await request.get(`${API_URL}/todos`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok()) return;
   const todos = (await response.json()) as { id: number }[];
   for (const todo of todos) {
-    await request.delete(`${API_URL}/${todo.id}`);
+    await request.delete(`${API_URL}/todos/${todo.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
   }
 }
 
-test.beforeEach(async ({ request }) => {
-  await deleteAllTodos(request);
-});
+// ─── Auth: Redirect without login ──────────────────────────────
 
-// ─── 7.9 Empty state ──────────────────────────────────────────
-
-test.describe("Empty state", () => {
-  test("shows empty message when no todos exist", async ({ page }) => {
-    await page.goto("/");
-
-    await expect(page.getByText("Nenhuma tarefa cadastrada")).toBeVisible();
-  });
-});
-
-// ─── 7.4 Add todo ─────────────────────────────────────────────
-
-test.describe("Add todo", () => {
-  test("adds a todo via button click and it appears in the list", async ({
+test.describe("Auth: Unauthenticated redirect", () => {
+  test("redirects to /login when accessing / without authentication", async ({
     page,
   }) => {
     await page.goto("/");
+
+    await expect(page).toHaveURL(/\/login/);
+    await expect(
+      page.getByRole("heading", { name: "Login" })
+    ).toBeVisible();
+  });
+});
+
+// ─── Auth: Register ────────────────────────────────────────────
+
+test.describe("Auth: Register", () => {
+  test("registers a new user and redirects to the todo list", async ({
+    page,
+  }) => {
+    const email = uniqueEmail();
+    await page.goto("/register");
+
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password", { exact: true }).fill(TEST_PASSWORD);
+    await page.getByLabel("Confirm Password").fill(TEST_PASSWORD);
+    await page.getByRole("button", { name: "Register" }).click();
+
+    // Should redirect to the home page with the todo list
+    await expect(page).toHaveURL("/");
+    await expect(page.getByText("To-Do List")).toBeVisible();
+  });
+
+  test("shows error when registering with duplicate email", async ({
+    page,
+    request,
+  }) => {
+    const email = uniqueEmail();
+    // Register once via API
+    await registerViaAPI(request, email, TEST_PASSWORD);
+
+    // Try registering again via UI
+    await page.goto("/register");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password", { exact: true }).fill(TEST_PASSWORD);
+    await page.getByLabel("Confirm Password").fill(TEST_PASSWORD);
+    await page.getByRole("button", { name: "Register" }).click();
+
+    await expect(page.getByRole("alert")).toBeVisible();
+  });
+});
+
+// ─── Auth: Login ───────────────────────────────────────────────
+
+test.describe("Auth: Login", () => {
+  test("logs in with valid credentials and shows todo list", async ({
+    page,
+    request,
+  }) => {
+    const email = uniqueEmail();
+    await registerViaAPI(request, email, TEST_PASSWORD);
+
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill(TEST_PASSWORD);
+    await page.getByRole("button", { name: "Login" }).click();
+
+    await expect(page).toHaveURL("/");
+    await expect(page.getByText("To-Do List")).toBeVisible();
+  });
+
+  test("shows error with invalid credentials", async ({
+    page,
+    request,
+  }) => {
+    const email = uniqueEmail();
+    await registerViaAPI(request, email, TEST_PASSWORD);
+
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill("wrongpassword");
+    await page.getByRole("button", { name: "Login" }).click();
+
+    await expect(page.getByRole("alert")).toBeVisible();
+  });
+});
+
+// ─── Auth: Logout ──────────────────────────────────────────────
+
+test.describe("Auth: Logout", () => {
+  test("logout redirects to /login and prevents access", async ({
+    page,
+    request,
+  }) => {
+    const email = uniqueEmail();
+    const token = await registerViaAPI(request, email, TEST_PASSWORD);
+    await authenticateInBrowser(page, token);
+
+    // Verify we're on the home page
+    await expect(page.getByText("To-Do List")).toBeVisible();
+
+    // Click logout
+    await page.getByText("Logout").click();
+
+    // Should redirect to login
+    await expect(page).toHaveURL(/\/login/);
+    await expect(
+      page.getByRole("heading", { name: "Login" })
+    ).toBeVisible();
+
+    // Trying to navigate to / should redirect back to /login
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/login/);
+  });
+});
+
+// ─── Auth: User isolation ──────────────────────────────────────
+
+test.describe("Auth: User isolation", () => {
+  test("two users do not see each other's todos", async ({
+    page,
+    request,
+  }) => {
+    // Create two users
+    const emailA = uniqueEmail();
+    const emailB = uniqueEmail();
+    const tokenA = await registerViaAPI(request, emailA, TEST_PASSWORD);
+    const tokenB = await registerViaAPI(request, emailB, TEST_PASSWORD);
+
+    // Create a todo for user A via API
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+      data: { title: "Tarefa do Usuário A" },
+    });
+
+    // Create a todo for user B via API
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${tokenB}` },
+      data: { title: "Tarefa do Usuário B" },
+    });
+
+    // Login as user A and verify they only see their own todo
+    await authenticateInBrowser(page, tokenA);
+    await expect(page.getByText("Tarefa do Usuário A")).toBeVisible();
+    await expect(page.getByText("Tarefa do Usuário B")).not.toBeVisible();
+
+    // Switch to user B
+    await authenticateInBrowser(page, tokenB);
+    await expect(page.getByText("Tarefa do Usuário B")).toBeVisible();
+    await expect(page.getByText("Tarefa do Usuário A")).not.toBeVisible();
+  });
+});
+
+// ─── Todo CRUD (authenticated) ─────────────────────────────────
+
+test.describe("Todo CRUD (authenticated)", () => {
+  let token: string;
+  let email: string;
+
+  test.beforeEach(async ({ request }) => {
+    email = uniqueEmail();
+    token = await registerViaAPI(request, email, TEST_PASSWORD);
+  });
+
+  test("shows empty message when no todos exist", async ({ page }) => {
+    await authenticateInBrowser(page, token);
+
+    await expect(page.getByText("Nenhuma tarefa cadastrada")).toBeVisible();
+  });
+
+  test("adds a todo via button click and it appears in the list", async ({
+    page,
+  }) => {
+    await authenticateInBrowser(page, token);
 
     await page.getByPlaceholder("Nova tarefa...").fill("Comprar leite");
     await page.getByRole("button", { name: "Adicionar" }).click();
@@ -47,7 +257,7 @@ test.describe("Add todo", () => {
   });
 
   test("adds a todo via Enter key", async ({ page }) => {
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
     await page.getByPlaceholder("Nova tarefa...").fill("Estudar Go");
     await page.getByPlaceholder("Nova tarefa...").press("Enter");
@@ -56,7 +266,7 @@ test.describe("Add todo", () => {
   });
 
   test("clears the input field after adding a todo", async ({ page }) => {
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
     const input = page.getByPlaceholder("Nova tarefa...");
     await input.fill("Tarefa temporária");
@@ -64,15 +274,11 @@ test.describe("Add todo", () => {
 
     await expect(input).toHaveValue("");
   });
-});
 
-// ─── 7.8 Empty field validation ───────────────────────────────
-
-test.describe("Empty field validation", () => {
   test("shows error message when trying to add empty todo", async ({
     page,
   }) => {
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
     await page.getByRole("button", { name: "Adicionar" }).click();
 
@@ -81,73 +287,60 @@ test.describe("Empty field validation", () => {
       page.getByText("O título não pode estar vazio")
     ).toBeVisible();
   });
-});
 
-// ─── 7.5 Mark as completed ───────────────────────────────────
-
-test.describe("Mark as completed", () => {
   test("marks a todo as completed with visual differentiation", async ({
     page,
     request,
   }) => {
     // Create a todo via API
-    await request.post(API_URL, {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
       data: { title: "Tarefa para concluir" },
     });
 
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
-    // Verify the todo is visible and pending
     await expect(page.getByText("Tarefa para concluir")).toBeVisible();
 
-    // Click the checkbox to mark as completed (use click instead of check
-    // because it's a controlled React component that updates asynchronously)
     const checkbox = page.getByRole("checkbox", {
       name: /Marcar como concluída: Tarefa para concluir/,
     });
     await checkbox.click();
 
-    // Wait for the item to get the completed class
     const todoItem = page.locator("li.todo-item.completed");
     await expect(todoItem).toBeVisible();
 
-    // Verify checkbox is now checked (aria-label changes after toggle)
     const checkedCheckbox = page.getByRole("checkbox", {
       name: /Marcar como pendente: Tarefa para concluir/,
     });
     await expect(checkedCheckbox).toBeChecked();
   });
-});
 
-// ─── 7.6 Revert to pending ───────────────────────────────────
-
-test.describe("Revert to pending", () => {
   test("reverts a completed todo back to pending", async ({
     page,
     request,
   }) => {
     // Create a completed todo via API
-    const createResp = await request.post(API_URL, {
+    const createResp = await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
       data: { title: "Tarefa concluída" },
     });
     const todo = (await createResp.json()) as { id: number };
-    await request.patch(`${API_URL}/${todo.id}`, {
+    await request.patch(`${API_URL}/todos/${todo.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
       data: { completed: true },
     });
 
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
-    // Verify it's completed
     const todoItem = page.locator("li.todo-item.completed");
     await expect(todoItem).toBeVisible();
 
-    // Click checkbox to revert to pending
     const checkbox = page.getByRole("checkbox", {
       name: /Marcar como pendente: Tarefa concluída/,
     });
     await checkbox.click();
 
-    // Verify it's no longer completed
     await expect(page.locator("li.todo-item.completed")).not.toBeVisible();
     await expect(
       page.getByRole("checkbox", {
@@ -155,32 +348,24 @@ test.describe("Revert to pending", () => {
       })
     ).not.toBeChecked();
   });
-});
 
-// ─── 7.7 Remove todo ─────────────────────────────────────────
-
-test.describe("Remove todo", () => {
   test("removes a todo after confirmation dialog", async ({
     page,
     request,
   }) => {
-    // Create a todo via API
-    await request.post(API_URL, {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
       data: { title: "Tarefa para remover" },
     });
 
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
     await expect(page.getByText("Tarefa para remover")).toBeVisible();
 
-    // Set up dialog handler to accept confirmation
     page.on("dialog", (dialog) => dialog.accept());
-
-    // Click the remove button
     await page
       .getByRole("button", { name: /Remover tarefa: Tarefa para remover/ })
       .click();
 
-    // Verify the todo is removed from the list
     await expect(page.getByText("Tarefa para remover")).not.toBeVisible();
     await expect(page.getByText("Nenhuma tarefa cadastrada")).toBeVisible();
   });
@@ -189,34 +374,66 @@ test.describe("Remove todo", () => {
     page,
     request,
   }) => {
-    // Create a todo via API
-    await request.post(API_URL, {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
       data: { title: "Tarefa que fica" },
     });
 
-    await page.goto("/");
+    await authenticateInBrowser(page, token);
 
-    // Set up dialog handler to dismiss confirmation
     page.on("dialog", (dialog) => dialog.dismiss());
-
     await page
       .getByRole("button", { name: /Remover tarefa: Tarefa que fica/ })
       .click();
 
-    // Verify the todo still exists
     await expect(page.getByText("Tarefa que fica")).toBeVisible();
+  });
+
+  test("creates a todo after login and verifies it appears", async ({
+    page,
+  }) => {
+    // Login via UI instead of direct token injection
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(email);
+    await page.getByLabel("Password").fill(TEST_PASSWORD);
+    await page.getByRole("button", { name: "Login" }).click();
+
+    await expect(page).toHaveURL("/");
+    await expect(page.getByText("To-Do List")).toBeVisible();
+
+    // Create a todo
+    await page.getByPlaceholder("Nova tarefa...").fill("Tarefa após login");
+    await page.getByRole("button", { name: "Adicionar" }).click();
+
+    await expect(page.getByText("Tarefa após login")).toBeVisible();
+  });
+
+  test("todo persists after page reload", async ({ page, request }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Tarefa persistente" },
+    });
+
+    await authenticateInBrowser(page, token);
+    await expect(page.getByText("Tarefa persistente")).toBeVisible();
+
+    await page.reload();
+
+    await expect(page.getByText("Tarefa persistente")).toBeVisible();
   });
 });
 
-// ─── Full CRUD flow ───────────────────────────────────────────
+// ─── Full CRUD flow (authenticated) ─────────────────────────────
 
-test.describe("Full CRUD flow", () => {
+test.describe("Full CRUD flow (authenticated)", () => {
   test("adds 3 todos, completes 1, removes 1, verifies final state", async ({
     page,
+    request,
   }) => {
-    await page.goto("/");
+    const email = uniqueEmail();
+    const token = await registerViaAPI(request, email, TEST_PASSWORD);
+    await authenticateInBrowser(page, token);
 
-    // Add 3 todos
     const input = page.getByPlaceholder("Nova tarefa...");
     const addButton = page.getByRole("button", { name: "Adicionar" });
 
@@ -232,12 +449,11 @@ test.describe("Full CRUD flow", () => {
     await addButton.click();
     await expect(page.getByText("Tarefa C")).toBeVisible();
 
-    // Mark "Tarefa B" as completed (use click for controlled React checkbox)
+    // Mark "Tarefa B" as completed
     await page
       .getByRole("checkbox", { name: /Marcar como concluída: Tarefa B/ })
       .click();
 
-    // Verify Tarefa B is completed
     const completedItems = page.locator("li.todo-item.completed");
     await expect(completedItems).toHaveCount(1);
 
@@ -247,34 +463,12 @@ test.describe("Full CRUD flow", () => {
       .getByRole("button", { name: /Remover tarefa: Tarefa C/ })
       .click();
 
-    // Wait for Tarefa C to disappear
     await expect(page.getByText("Tarefa C")).not.toBeVisible();
 
-    // Final state: 2 todos — "Tarefa A" (pending), "Tarefa B" (completed)
+    // Final state: 2 todos
     const allItems = page.locator("li.todo-item");
     await expect(allItems).toHaveCount(2);
     await expect(page.getByText("Tarefa A")).toBeVisible();
     await expect(page.getByText("Tarefa B")).toBeVisible();
-  });
-});
-
-// ─── Persistence ──────────────────────────────────────────────
-
-test.describe("Persistence", () => {
-  test("todo persists after page reload", async ({ page, request }) => {
-    // Create a todo via API
-    await request.post(API_URL, {
-      data: { title: "Tarefa persistente" },
-    });
-
-    // Load the page
-    await page.goto("/");
-    await expect(page.getByText("Tarefa persistente")).toBeVisible();
-
-    // Reload the page
-    await page.reload();
-
-    // Verify the todo is still there
-    await expect(page.getByText("Tarefa persistente")).toBeVisible();
   });
 });

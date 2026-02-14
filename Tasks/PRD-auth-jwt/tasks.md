@@ -2,4 +2,4 @@
 
 ## Tarefas
 
-- [ ] 1.0 Autenticação por senha com JWT (registro, login, middleware, escopo por usuário, frontend e testes)
+- [x] 1.0 Autenticação por senha com JWT (registro, login, middleware, escopo por usuário, frontend e testes)

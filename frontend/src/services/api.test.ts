@@ -15,6 +15,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   mockFetch.mockReset();
+  localStorage.clear();
+  // Prevent actual navigation in tests
+  delete (window as Record<string, unknown>).location;
+  (window as Record<string, unknown>).location = { href: "" } as Location;
 });
 
 // --- fetchTodos ---
@@ -30,7 +34,23 @@ describe("fetchTodos", () => {
     const result = await fetchTodos();
 
     expect(result).toEqual(todos);
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/todos");
+    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/todos", {
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+
+  it("sends Authorization header when token exists", async () => {
+    localStorage.setItem("token", "my-jwt-token");
+    mockFetch.mockResolvedValueOnce(jsonResponse([]));
+
+    await fetchTodos();
+
+    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/todos", {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer my-jwt-token",
+      },
+    });
   });
 
   it("returns empty array when API responds 200 with []", async () => {
@@ -48,12 +68,22 @@ describe("fetchTodos", () => {
 
     await expect(fetchTodos()).rejects.toThrow("internal server error");
   });
+
+  it("redirects to login and clears token on 401", async () => {
+    localStorage.setItem("token", "expired-token");
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));
+
+    await expect(fetchTodos()).rejects.toThrow("Session expired");
+    expect(localStorage.getItem("token")).toBeNull();
+    expect(window.location.href).toBe("/login");
+  });
 });
 
 // --- createTodo ---
 
 describe("createTodo", () => {
-  it("sends POST and returns created todo", async () => {
+  it("sends POST with auth header and returns created todo", async () => {
+    localStorage.setItem("token", "my-token");
     const created: Todo = {
       id: 1,
       title: "New task",
@@ -67,7 +97,10 @@ describe("createTodo", () => {
     expect(result).toEqual(created);
     expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/todos", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer my-token",
+      },
       body: JSON.stringify({ title: "New task" }),
     });
   });
@@ -84,7 +117,8 @@ describe("createTodo", () => {
 // --- updateTodo ---
 
 describe("updateTodo", () => {
-  it("sends PATCH to correct ID", async () => {
+  it("sends PATCH with auth header to correct ID", async () => {
+    localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
     await updateTodo(5, true);
@@ -93,7 +127,10 @@ describe("updateTodo", () => {
       "http://localhost:8080/api/todos/5",
       {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer my-token",
+        },
         body: JSON.stringify({ completed: true }),
       }
     );
@@ -111,7 +148,8 @@ describe("updateTodo", () => {
 // --- deleteTodo ---
 
 describe("deleteTodo", () => {
-  it("sends DELETE to correct ID", async () => {
+  it("sends DELETE with auth header to correct ID", async () => {
+    localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
     await deleteTodo(3);
@@ -120,6 +158,10 @@ describe("deleteTodo", () => {
       "http://localhost:8080/api/todos/3",
       {
         method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer my-token",
+        },
       }
     );
   });

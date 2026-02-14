@@ -18,12 +18,22 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// --- Unit Tests ---
+// createTestUser is a helper that creates a user and returns the user.
+func createTestUser(t *testing.T, db *sql.DB, email, passwordHash string) User {
+	t.Helper()
+	user, err := CreateUser(db, email, passwordHash)
+	if err != nil {
+		t.Fatalf("CreateUser(%q) failed: %v", email, err)
+	}
+	return user
+}
+
+// --- InitDB Tests ---
 
 func TestInitDB(t *testing.T) {
 	db := setupTestDB(t)
 
-	// Verify that the todos table exists by querying its schema
+	// Verify that the todos table exists
 	var name string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='todos'").Scan(&name)
 	if err != nil {
@@ -32,12 +42,117 @@ func TestInitDB(t *testing.T) {
 	if name != "todos" {
 		t.Errorf("expected table name 'todos', got '%s'", name)
 	}
+
+	// Verify that the users table exists
+	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").Scan(&name)
+	if err != nil {
+		t.Fatalf("expected users table to exist, got error: %v", err)
+	}
+	if name != "users" {
+		t.Errorf("expected table name 'users', got '%s'", name)
+	}
 }
+
+// --- User Tests ---
+
+func TestCreateUser_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	user, err := CreateUser(db, "test@example.com", "$2a$10$hashedpassword")
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	if user.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+	if user.Email != "test@example.com" {
+		t.Errorf("expected email 'test@example.com', got '%s'", user.Email)
+	}
+	if user.PasswordHash != "$2a$10$hashedpassword" {
+		t.Errorf("expected password hash to match")
+	}
+	if user.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+}
+
+func TestCreateUser_DuplicateEmail(t *testing.T) {
+	db := setupTestDB(t)
+
+	_, err := CreateUser(db, "dup@example.com", "hash1")
+	if err != nil {
+		t.Fatalf("first CreateUser failed: %v", err)
+	}
+
+	_, err = CreateUser(db, "dup@example.com", "hash2")
+	if err == nil {
+		t.Error("expected error for duplicate email, got nil")
+	}
+	if !errors.Is(err, ErrDuplicateEmail) {
+		t.Errorf("expected ErrDuplicateEmail, got: %v", err)
+	}
+}
+
+func TestCreateUser_EmptyEmail(t *testing.T) {
+	db := setupTestDB(t)
+
+	// SQLite will reject empty email since it's NOT NULL but not checked at Go level;
+	// The handler validates this, but the DB function accepts whatever is given.
+	// We test the handler validation separately.
+	user, err := CreateUser(db, "", "somehash")
+	if err != nil {
+		// acceptable - DB constraint might reject it
+		return
+	}
+	if user.Email != "" {
+		t.Errorf("expected empty email, got '%s'", user.Email)
+	}
+}
+
+func TestGetUserByEmail_Found(t *testing.T) {
+	db := setupTestDB(t)
+
+	created, err := CreateUser(db, "find@example.com", "hashvalue")
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	found, err := GetUserByEmail(db, "find@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail failed: %v", err)
+	}
+
+	if found.ID != created.ID {
+		t.Errorf("expected ID %d, got %d", created.ID, found.ID)
+	}
+	if found.Email != "find@example.com" {
+		t.Errorf("expected email 'find@example.com', got '%s'", found.Email)
+	}
+	if found.PasswordHash != "hashvalue" {
+		t.Errorf("expected password hash 'hashvalue', got '%s'", found.PasswordHash)
+	}
+}
+
+func TestGetUserByEmail_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+
+	_, err := GetUserByEmail(db, "notexist@example.com")
+	if err == nil {
+		t.Error("expected error for non-existent email, got nil")
+	}
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got: %v", err)
+	}
+}
+
+// --- Todo CRUD Tests with userID ---
 
 func TestCreateTodo_Success(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	todo, err := CreateTodo(db, "Buy groceries")
+	todo, err := CreateTodo(db, "Buy groceries", user.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo failed: %v", err)
 	}
@@ -54,10 +169,14 @@ func TestCreateTodo_Success(t *testing.T) {
 	if todo.CreatedAt == "" {
 		t.Error("expected non-empty CreatedAt")
 	}
+	if todo.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %d", user.ID, todo.UserID)
+	}
 }
 
 func TestCreateTodo_EmptyTitle(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	testCases := []struct {
 		name  string
@@ -71,7 +190,7 @@ func TestCreateTodo_EmptyTitle(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := CreateTodo(db, tc.title)
+			_, err := CreateTodo(db, tc.title, user.ID)
 			if err == nil {
 				t.Error("expected error for empty title, got nil")
 			}
@@ -84,9 +203,10 @@ func TestCreateTodo_EmptyTitle(t *testing.T) {
 
 func TestCreateTodo_TitleTooLong(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	longTitle := strings.Repeat("a", MaxTitleLength+1)
-	_, err := CreateTodo(db, longTitle)
+	_, err := CreateTodo(db, longTitle, user.ID)
 	if err == nil {
 		t.Error("expected error for title exceeding max length, got nil")
 	}
@@ -97,9 +217,10 @@ func TestCreateTodo_TitleTooLong(t *testing.T) {
 
 func TestCreateTodo_TitleAtMaxLength(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	maxTitle := strings.Repeat("a", MaxTitleLength)
-	todo, err := CreateTodo(db, maxTitle)
+	todo, err := CreateTodo(db, maxTitle, user.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo with max length title failed: %v", err)
 	}
@@ -110,8 +231,9 @@ func TestCreateTodo_TitleAtMaxLength(t *testing.T) {
 
 func TestGetAllTodos_Empty(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	todos, err := GetAllTodos(db)
+	todos, err := GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("GetAllTodos failed: %v", err)
 	}
@@ -120,7 +242,6 @@ func TestGetAllTodos_Empty(t *testing.T) {
 		t.Errorf("expected 0 todos, got %d", len(todos))
 	}
 
-	// Verify it returns an empty slice, not nil
 	if todos == nil {
 		t.Error("expected empty slice, got nil")
 	}
@@ -128,15 +249,16 @@ func TestGetAllTodos_Empty(t *testing.T) {
 
 func TestGetAllTodos_MultipleTodos(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	titles := []string{"First task", "Second task", "Third task"}
 	for _, title := range titles {
-		if _, err := CreateTodo(db, title); err != nil {
+		if _, err := CreateTodo(db, title, user.ID); err != nil {
 			t.Fatalf("CreateTodo(%q) failed: %v", title, err)
 		}
 	}
 
-	todos, err := GetAllTodos(db)
+	todos, err := GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("GetAllTodos failed: %v", err)
 	}
@@ -145,9 +267,6 @@ func TestGetAllTodos_MultipleTodos(t *testing.T) {
 		t.Fatalf("expected 3 todos, got %d", len(todos))
 	}
 
-	// Verify ordering is by created_at DESC (most recent first).
-	// Since all were created nearly simultaneously with the same datetime('now'),
-	// the order may depend on insertion order. We at least verify all titles are present.
 	foundTitles := make(map[string]bool)
 	for _, todo := range todos {
 		foundTitles[todo.Title] = true
@@ -159,21 +278,49 @@ func TestGetAllTodos_MultipleTodos(t *testing.T) {
 	}
 }
 
+func TestGetAllTodos_UserIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	CreateTodo(db, "User1 Task A", user1.ID)
+	CreateTodo(db, "User1 Task B", user1.ID)
+	CreateTodo(db, "User2 Task C", user2.ID)
+
+	todos1, err := GetAllTodos(db, user1.ID)
+	if err != nil {
+		t.Fatalf("GetAllTodos(user1) failed: %v", err)
+	}
+	if len(todos1) != 2 {
+		t.Errorf("expected 2 todos for user1, got %d", len(todos1))
+	}
+
+	todos2, err := GetAllTodos(db, user2.ID)
+	if err != nil {
+		t.Fatalf("GetAllTodos(user2) failed: %v", err)
+	}
+	if len(todos2) != 1 {
+		t.Errorf("expected 1 todo for user2, got %d", len(todos2))
+	}
+	if todos2[0].Title != "User2 Task C" {
+		t.Errorf("expected 'User2 Task C', got '%s'", todos2[0].Title)
+	}
+}
+
 func TestUpdateTodoStatus_Success(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	todo, err := CreateTodo(db, "Test task")
+	todo, err := CreateTodo(db, "Test task", user.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo failed: %v", err)
 	}
 
-	// Mark as completed
-	if err := UpdateTodoStatus(db, todo.ID, true); err != nil {
+	if err := UpdateTodoStatus(db, todo.ID, true, user.ID); err != nil {
 		t.Fatalf("UpdateTodoStatus(completed=true) failed: %v", err)
 	}
 
-	// Verify with GetAllTodos
-	todos, err := GetAllTodos(db)
+	todos, err := GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("GetAllTodos failed: %v", err)
 	}
@@ -184,12 +331,11 @@ func TestUpdateTodoStatus_Success(t *testing.T) {
 		t.Error("expected todo to be completed")
 	}
 
-	// Revert back to pending
-	if err := UpdateTodoStatus(db, todo.ID, false); err != nil {
+	if err := UpdateTodoStatus(db, todo.ID, false, user.ID); err != nil {
 		t.Fatalf("UpdateTodoStatus(completed=false) failed: %v", err)
 	}
 
-	todos, err = GetAllTodos(db)
+	todos, err = GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("GetAllTodos failed: %v", err)
 	}
@@ -200,8 +346,9 @@ func TestUpdateTodoStatus_Success(t *testing.T) {
 
 func TestUpdateTodoStatus_NotFound(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	err := UpdateTodoStatus(db, 999, true)
+	err := UpdateTodoStatus(db, 999, true, user.ID)
 	if err == nil {
 		t.Error("expected error for non-existent ID, got nil")
 	}
@@ -210,20 +357,39 @@ func TestUpdateTodoStatus_NotFound(t *testing.T) {
 	}
 }
 
-func TestDeleteTodo_Success(t *testing.T) {
+func TestUpdateTodoStatus_WrongUser(t *testing.T) {
 	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
 
-	todo, err := CreateTodo(db, "To be deleted")
+	todo, err := CreateTodo(db, "User1 task", user1.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo failed: %v", err)
 	}
 
-	if err := DeleteTodo(db, todo.ID); err != nil {
+	err = UpdateTodoStatus(db, todo.ID, true, user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to update, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "To be deleted", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := DeleteTodo(db, todo.ID, user.ID); err != nil {
 		t.Fatalf("DeleteTodo failed: %v", err)
 	}
 
-	// Verify the todo no longer exists
-	todos, err := GetAllTodos(db)
+	todos, err := GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("GetAllTodos failed: %v", err)
 	}
@@ -234,8 +400,9 @@ func TestDeleteTodo_Success(t *testing.T) {
 
 func TestDeleteTodo_NotFound(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	err := DeleteTodo(db, 999)
+	err := DeleteTodo(db, 999, user.ID)
 	if err == nil {
 		t.Error("expected error for non-existent ID, got nil")
 	}
@@ -244,13 +411,42 @@ func TestDeleteTodo_NotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteTodo_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	todo, err := CreateTodo(db, "User1 task", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	err = DeleteTodo(db, todo.ID, user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to delete, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+
+	// Verify the todo still exists for user1
+	todos, err := GetAllTodos(db, user1.ID)
+	if err != nil {
+		t.Fatalf("GetAllTodos failed: %v", err)
+	}
+	if len(todos) != 1 {
+		t.Errorf("expected 1 todo still exists for user1, got %d", len(todos))
+	}
+}
+
 // --- Integration Test ---
 
 func TestCRUDFlow(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	// 1. List — should be empty
-	todos, err := GetAllTodos(db)
+	todos, err := GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("Step 1 - GetAllTodos failed: %v", err)
 	}
@@ -259,17 +455,17 @@ func TestCRUDFlow(t *testing.T) {
 	}
 
 	// 2. Create two todos
-	todo1, err := CreateTodo(db, "Task one")
+	todo1, err := CreateTodo(db, "Task one", user.ID)
 	if err != nil {
 		t.Fatalf("Step 2 - CreateTodo(Task one) failed: %v", err)
 	}
-	todo2, err := CreateTodo(db, "Task two")
+	todo2, err := CreateTodo(db, "Task two", user.ID)
 	if err != nil {
 		t.Fatalf("Step 2 - CreateTodo(Task two) failed: %v", err)
 	}
 
 	// 3. List — should have 2 todos
-	todos, err = GetAllTodos(db)
+	todos, err = GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("Step 3 - GetAllTodos failed: %v", err)
 	}
@@ -278,12 +474,12 @@ func TestCRUDFlow(t *testing.T) {
 	}
 
 	// 4. Mark todo1 as completed
-	if err := UpdateTodoStatus(db, todo1.ID, true); err != nil {
+	if err := UpdateTodoStatus(db, todo1.ID, true, user.ID); err != nil {
 		t.Fatalf("Step 4 - UpdateTodoStatus failed: %v", err)
 	}
 
 	// 5. Verify todo1 is completed
-	todos, err = GetAllTodos(db)
+	todos, err = GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("Step 5 - GetAllTodos failed: %v", err)
 	}
@@ -297,12 +493,12 @@ func TestCRUDFlow(t *testing.T) {
 	}
 
 	// 6. Delete todo1
-	if err := DeleteTodo(db, todo1.ID); err != nil {
+	if err := DeleteTodo(db, todo1.ID, user.ID); err != nil {
 		t.Fatalf("Step 6 - DeleteTodo(todo1) failed: %v", err)
 	}
 
 	// 7. Verify only todo2 remains
-	todos, err = GetAllTodos(db)
+	todos, err = GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("Step 7 - GetAllTodos failed: %v", err)
 	}
@@ -314,12 +510,12 @@ func TestCRUDFlow(t *testing.T) {
 	}
 
 	// 8. Delete todo2
-	if err := DeleteTodo(db, todo2.ID); err != nil {
+	if err := DeleteTodo(db, todo2.ID, user.ID); err != nil {
 		t.Fatalf("Step 8 - DeleteTodo(todo2) failed: %v", err)
 	}
 
 	// 9. List — should be empty again
-	todos, err = GetAllTodos(db)
+	todos, err = GetAllTodos(db, user.ID)
 	if err != nil {
 		t.Fatalf("Step 9 - GetAllTodos failed: %v", err)
 	}

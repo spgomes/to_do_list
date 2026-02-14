@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import App from "../../App.tsx";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "../../contexts/AuthContext.tsx";
+import { ProtectedRoute } from "../ProtectedRoute.tsx";
+import { TodoApp } from "../TodoApp.tsx";
+import { LoginPage } from "../../pages/LoginPage.tsx";
+import { RegisterPage } from "../../pages/RegisterPage.tsx";
 
 const mockTodos = [
   { id: 1, title: "Test task", completed: false, created_at: "2025-01-01" },
@@ -15,19 +20,53 @@ vi.mock("../../services/api.ts", () => ({
   deleteTodo: vi.fn(),
 }));
 
+vi.mock("../../services/auth.ts", () => ({
+  registerUser: vi.fn(),
+  loginUser: vi.fn(),
+}));
+
 import { fetchTodos } from "../../services/api.ts";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
+function renderApp(initialEntries = ["/"]) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <TodoApp />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </AuthProvider>
+    </MemoryRouter>
+  );
+}
+
 describe("App", () => {
-  it("loads and displays todos from the API", async () => {
+  it("redirects to login when not authenticated", async () => {
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Login" })).toBeDefined();
+    });
+  });
+
+  it("shows todo app when authenticated", async () => {
+    localStorage.setItem("token", "fake-token");
     vi.mocked(fetchTodos).mockResolvedValue(mockTodos);
 
-    render(<App />);
-
-    expect(screen.getByText("Carregando tarefas...")).toBeDefined();
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByText("Test task")).toBeDefined();
@@ -35,20 +74,22 @@ describe("App", () => {
     });
   });
 
-  it("shows loading spinner with role status during load", () => {
+  it("shows loading spinner with role status during load when authenticated", () => {
+    localStorage.setItem("token", "fake-token");
     vi.mocked(fetchTodos).mockReturnValue(new Promise(() => {}));
 
-    render(<App />);
+    renderApp();
 
     const loadingContainer = screen.getByRole("status");
     expect(loadingContainer).toBeDefined();
     expect(loadingContainer.getAttribute("aria-label")).toBe("Carregando tarefas");
   });
 
-  it("shows error banner with role alert on API error", async () => {
+  it("shows error banner with role alert on API error when authenticated", async () => {
+    localStorage.setItem("token", "fake-token");
     vi.mocked(fetchTodos).mockRejectedValue(new Error("Network error"));
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       const alert = screen.getByRole("alert");
@@ -57,14 +98,26 @@ describe("App", () => {
     });
   });
 
-  it("renders header and main sections after loading", async () => {
+  it("renders header and main sections after loading when authenticated", async () => {
+    localStorage.setItem("token", "fake-token");
     vi.mocked(fetchTodos).mockResolvedValue(mockTodos);
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByText("To-Do List")).toBeDefined();
       expect(screen.getByRole("main")).toBeDefined();
+    });
+  });
+
+  it("shows logout button when authenticated", async () => {
+    localStorage.setItem("token", "fake-token");
+    vi.mocked(fetchTodos).mockResolvedValue(mockTodos);
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText("Logout")).toBeDefined();
     });
   });
 });

@@ -2,20 +2,312 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
-// --- Unit Tests (httptest.NewRecorder) ---
+// --- Auth Handler Tests ---
+
+func TestHandleRegister_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"new@example.com","password":"secret123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleRegister(db)(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected non-empty token")
+	}
+}
+
+func TestHandleRegister_DuplicateEmail(t *testing.T) {
+	db := setupTestDB(t)
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pass123"), bcrypt.DefaultCost)
+	CreateUser(db, "dup@example.com", string(hash))
+
+	body := `{"email":"dup@example.com","password":"pass456"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleRegister(db)(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "email already registered" {
+		t.Errorf("expected 'email already registered', got '%s'", resp["error"])
+	}
+}
+
+func TestHandleRegister_EmptyEmail(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"","password":"secret123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleRegister(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleRegister_InvalidEmail(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"notanemail","password":"secret123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleRegister(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "invalid email format" {
+		t.Errorf("expected 'invalid email format', got '%s'", resp["error"])
+	}
+}
+
+func TestHandleRegister_ShortPassword(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"user@example.com","password":"12345"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/register", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleRegister(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "password must be at least 6 characters" {
+		t.Errorf("expected password length error, got '%s'", resp["error"])
+	}
+}
+
+func TestHandleLogin_Success(t *testing.T) {
+	db := setupTestDB(t)
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.DefaultCost)
+	CreateUser(db, "login@example.com", string(hash))
+
+	body := `{"email":"login@example.com","password":"secret123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleLogin(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected non-empty token")
+	}
+}
+
+func TestHandleLogin_WrongPassword(t *testing.T) {
+	db := setupTestDB(t)
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("correct"), bcrypt.DefaultCost)
+	CreateUser(db, "wrong@example.com", string(hash))
+
+	body := `{"email":"wrong@example.com","password":"incorrect"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleLogin(db)(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "invalid credentials" {
+		t.Errorf("expected 'invalid credentials', got '%s'", resp["error"])
+	}
+}
+
+func TestHandleLogin_UserNotFound(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"nobody@example.com","password":"doesntmatter"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleLogin(db)(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestHandleLogin_EmptyFields(t *testing.T) {
+	db := setupTestDB(t)
+
+	body := `{"email":"","password":""}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+
+	handleLogin(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+}
+
+// --- JWT Tests ---
+
+func TestGenerateAndValidateJWT(t *testing.T) {
+	token, err := generateJWT(42)
+	if err != nil {
+		t.Fatalf("generateJWT failed: %v", err)
+	}
+	if token == "" {
+		t.Fatal("expected non-empty token")
+	}
+
+	userID, err := validateJWT(token)
+	if err != nil {
+		t.Fatalf("validateJWT failed: %v", err)
+	}
+	if userID != 42 {
+		t.Errorf("expected userID 42, got %d", userID)
+	}
+}
+
+func TestValidateJWT_InvalidToken(t *testing.T) {
+	_, err := validateJWT("invalid.token.string")
+	if err == nil {
+		t.Error("expected error for invalid token, got nil")
+	}
+}
+
+func TestValidateJWT_EmptyToken(t *testing.T) {
+	_, err := validateJWT("")
+	if err == nil {
+		t.Error("expected error for empty token, got nil")
+	}
+}
+
+// --- JWT Middleware Tests ---
+
+func TestJWTMiddleware_ValidToken(t *testing.T) {
+	token, _ := generateJWT(1)
+
+	handler := jwtMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uid := getUserIDFromContext(r)
+		if uid != 1 {
+			t.Errorf("expected userID 1 in context, got %d", uid)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+}
+
+func TestJWTMiddleware_MissingHeader(t *testing.T) {
+	handler := jwtMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called without authorization")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestJWTMiddleware_InvalidFormat(t *testing.T) {
+	handler := jwtMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called with invalid authorization")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req.Header.Set("Authorization", "NotBearer sometoken")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+func TestJWTMiddleware_InvalidToken(t *testing.T) {
+	handler := jwtMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called with invalid token")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req.Header.Set("Authorization", "Bearer invalidtoken")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w.Code)
+	}
+}
+
+// --- Todo Handler Tests (with auth context) ---
+
+func injectUserID(r *http.Request, userID int64) *http.Request {
+	ctx := context.WithValue(r.Context(), userIDKey, userID)
+	return r.WithContext(ctx)
+}
 
 func TestHandleListTodos_Empty(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleListTodos(db)(w, req)
@@ -40,9 +332,11 @@ func TestHandleListTodos_Empty(t *testing.T) {
 
 func TestHandleCreateTodo_Success(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	body := `{"title":"Buy milk"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleCreateTodo(db)(w, req)
@@ -68,9 +362,11 @@ func TestHandleCreateTodo_Success(t *testing.T) {
 
 func TestHandleCreateTodo_EmptyTitle(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	body := `{"title":""}`
 	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleCreateTodo(db)(w, req)
@@ -90,10 +386,12 @@ func TestHandleCreateTodo_EmptyTitle(t *testing.T) {
 
 func TestHandleCreateTodo_TitleTooLong(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	longTitle := strings.Repeat("a", MaxTitleLength+1)
 	body := `{"title":"` + longTitle + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleCreateTodo(db)(w, req)
@@ -113,9 +411,11 @@ func TestHandleCreateTodo_TitleTooLong(t *testing.T) {
 
 func TestHandleCreateTodo_InvalidJSON(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	body := `not valid json`
 	req := httptest.NewRequest(http.MethodPost, "/api/todos", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleCreateTodo(db)(w, req)
@@ -135,8 +435,9 @@ func TestHandleCreateTodo_InvalidJSON(t *testing.T) {
 
 func TestHandleUpdateTodo_Success(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	todo, err := CreateTodo(db, "Test task")
+	todo, err := CreateTodo(db, "Test task", user.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo failed: %v", err)
 	}
@@ -144,6 +445,7 @@ func TestHandleUpdateTodo_Success(t *testing.T) {
 	body := `{"completed":true}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/todos/"+strconv.FormatInt(todo.ID, 10), bytes.NewBufferString(body))
 	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleUpdateTodo(db)(w, req)
@@ -155,10 +457,12 @@ func TestHandleUpdateTodo_Success(t *testing.T) {
 
 func TestHandleUpdateTodo_NotFound(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	body := `{"completed":true}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/todos/999", bytes.NewBufferString(body))
 	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleUpdateTodo(db)(w, req)
@@ -178,10 +482,12 @@ func TestHandleUpdateTodo_NotFound(t *testing.T) {
 
 func TestHandleUpdateTodo_InvalidID(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	body := `{"completed":true}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/todos/abc", bytes.NewBufferString(body))
 	req.SetPathValue("id", "abc")
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleUpdateTodo(db)(w, req)
@@ -201,14 +507,16 @@ func TestHandleUpdateTodo_InvalidID(t *testing.T) {
 
 func TestHandleDeleteTodo_Success(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
-	todo, err := CreateTodo(db, "To be deleted")
+	todo, err := CreateTodo(db, "To be deleted", user.ID)
 	if err != nil {
 		t.Fatalf("CreateTodo failed: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/todos/"+strconv.FormatInt(todo.ID, 10), nil)
 	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleDeleteTodo(db)(w, req)
@@ -220,9 +528,11 @@ func TestHandleDeleteTodo_Success(t *testing.T) {
 
 func TestHandleDeleteTodo_NotFound(t *testing.T) {
 	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/todos/999", nil)
 	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
 	w := httptest.NewRecorder()
 
 	handleDeleteTodo(db)(w, req)
@@ -262,8 +572,8 @@ func TestCORSMiddleware(t *testing.T) {
 		}
 
 		headers := w.Header().Get("Access-Control-Allow-Headers")
-		if headers != "Content-Type" {
-			t.Errorf("expected Access-Control-Allow-Headers 'Content-Type', got '%s'", headers)
+		if headers != "Content-Type, Authorization" {
+			t.Errorf("expected Access-Control-Allow-Headers 'Content-Type, Authorization', got '%s'", headers)
 		}
 
 		if w.Code != http.StatusOK {
@@ -288,16 +598,22 @@ func TestCORSMiddleware(t *testing.T) {
 	})
 }
 
-// --- Integration Test (httptest.NewServer + SQLite in-memory) ---
+// --- Integration Test (httptest.NewServer + full auth flow) ---
 
-func TestAPIFullCRUDFlow(t *testing.T) {
+func TestAPIFullAuthAndCRUDFlow(t *testing.T) {
 	db := setupTestDB(t)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/todos", handleListTodos(db))
-	mux.HandleFunc("POST /api/todos", handleCreateTodo(db))
-	mux.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
-	mux.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	mux.HandleFunc("POST /api/auth/register", handleRegister(db))
+	mux.HandleFunc("POST /api/auth/login", handleLogin(db))
+
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/todos", handleListTodos(db))
+	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	mux.Handle("/api/todos", jwtMiddleware(protected))
+	mux.Handle("/api/todos/", jwtMiddleware(protected))
 
 	srv := httptest.NewServer(corsMiddleware(mux))
 	defer srv.Close()
@@ -305,100 +621,180 @@ func TestAPIFullCRUDFlow(t *testing.T) {
 	client := srv.Client()
 	baseURL := srv.URL
 
-	// 1. GET /api/todos — should return empty array
-	resp, err := client.Get(baseURL + "/api/todos")
+	// 1. Register User A
+	regBody := `{"email":"userA@test.com","password":"passA123"}`
+	resp, err := client.Post(baseURL+"/api/auth/register", "application/json", bytes.NewBufferString(regBody))
 	if err != nil {
-		t.Fatalf("Step 1 - GET failed: %v", err)
+		t.Fatalf("Step 1 - Register failed: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Step 1 - expected 200, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Step 1 - expected 201, got %d", resp.StatusCode)
 	}
-	var todos []Todo
-	json.NewDecoder(resp.Body).Decode(&todos)
+	var regResp map[string]string
+	json.NewDecoder(resp.Body).Decode(&regResp)
 	resp.Body.Close()
-	if len(todos) != 0 {
-		t.Fatalf("Step 1 - expected 0 todos, got %d", len(todos))
+	tokenA := regResp["token"]
+	if tokenA == "" {
+		t.Fatal("Step 1 - expected non-empty token for User A")
 	}
 
-	// 2. POST /api/todos — create a todo
-	createBody := `{"title":"Integration test task"}`
-	resp, err = client.Post(baseURL+"/api/todos", "application/json", bytes.NewBufferString(createBody))
+	// 2. Register User B
+	regBody = `{"email":"userB@test.com","password":"passB123"}`
+	resp, err = client.Post(baseURL+"/api/auth/register", "application/json", bytes.NewBufferString(regBody))
 	if err != nil {
-		t.Fatalf("Step 2 - POST failed: %v", err)
+		t.Fatalf("Step 2 - Register failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Step 2 - expected 201, got %d", resp.StatusCode)
 	}
-	var createdTodo Todo
-	json.NewDecoder(resp.Body).Decode(&createdTodo)
+	json.NewDecoder(resp.Body).Decode(&regResp)
 	resp.Body.Close()
-	if createdTodo.Title != "Integration test task" {
-		t.Errorf("Step 2 - expected title 'Integration test task', got '%s'", createdTodo.Title)
+	tokenB := regResp["token"]
+
+	// 3. Try to register with duplicate email → 409
+	regBody = `{"email":"userA@test.com","password":"different"}`
+	resp, err = client.Post(baseURL+"/api/auth/register", "application/json", bytes.NewBufferString(regBody))
+	if err != nil {
+		t.Fatalf("Step 3 - Register failed: %v", err)
 	}
-	if createdTodo.ID == 0 {
-		t.Error("Step 2 - expected non-zero ID")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("Step 3 - expected 409 for duplicate email, got %d", resp.StatusCode)
 	}
 
-	// 3. GET /api/todos — should return 1 todo
+	// 4. Login with wrong password → 401
+	loginBody := `{"email":"userA@test.com","password":"wrongpassword"}`
+	resp, err = client.Post(baseURL+"/api/auth/login", "application/json", bytes.NewBufferString(loginBody))
+	if err != nil {
+		t.Fatalf("Step 4 - Login failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Step 4 - expected 401, got %d", resp.StatusCode)
+	}
+
+	// 5. Login with correct password → 200
+	loginBody = `{"email":"userA@test.com","password":"passA123"}`
+	resp, err = client.Post(baseURL+"/api/auth/login", "application/json", bytes.NewBufferString(loginBody))
+	if err != nil {
+		t.Fatalf("Step 5 - Login failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Step 5 - expected 200, got %d", resp.StatusCode)
+	}
+	var loginResp map[string]string
+	json.NewDecoder(resp.Body).Decode(&loginResp)
+	resp.Body.Close()
+	if loginResp["token"] == "" {
+		t.Fatal("Step 5 - expected non-empty token on login")
+	}
+
+	// 6. GET /api/todos without token → 401
 	resp, err = client.Get(baseURL + "/api/todos")
 	if err != nil {
-		t.Fatalf("Step 3 - GET failed: %v", err)
+		t.Fatalf("Step 6 - GET failed: %v", err)
 	}
-	json.NewDecoder(resp.Body).Decode(&todos)
 	resp.Body.Close()
-	if len(todos) != 1 {
-		t.Fatalf("Step 3 - expected 1 todo, got %d", len(todos))
-	}
-	if todos[0].Completed {
-		t.Error("Step 3 - expected todo to be pending")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("Step 6 - expected 401 without token, got %d", resp.StatusCode)
 	}
 
-	// 4. PATCH /api/todos/{id} — mark as completed
-	patchBody := `{"completed":true}`
-	patchReq, _ := http.NewRequest(http.MethodPatch, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10), bytes.NewBufferString(patchBody))
-	patchReq.Header.Set("Content-Type", "application/json")
-	resp, err = client.Do(patchReq)
+	// 7. User A creates a todo
+	createReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/todos", bytes.NewBufferString(`{"title":"User A task"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+tokenA)
+	resp, err = client.Do(createReq)
 	if err != nil {
-		t.Fatalf("Step 4 - PATCH failed: %v", err)
+		t.Fatalf("Step 7 - POST failed: %v", err)
 	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Step 7 - expected 201, got %d", resp.StatusCode)
+	}
+	var createdTodoA Todo
+	json.NewDecoder(resp.Body).Decode(&createdTodoA)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("Step 4 - expected 204, got %d", resp.StatusCode)
-	}
 
-	// 5. GET /api/todos — verify completed
-	resp, err = client.Get(baseURL + "/api/todos")
+	// 8. User B creates a todo
+	createReq, _ = http.NewRequest(http.MethodPost, baseURL+"/api/todos", bytes.NewBufferString(`{"title":"User B task"}`))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+tokenB)
+	resp, err = client.Do(createReq)
 	if err != nil {
-		t.Fatalf("Step 5 - GET failed: %v", err)
+		t.Fatalf("Step 8 - POST failed: %v", err)
 	}
-	json.NewDecoder(resp.Body).Decode(&todos)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Step 8 - expected 201, got %d", resp.StatusCode)
+	}
 	resp.Body.Close()
-	if len(todos) != 1 {
-		t.Fatalf("Step 5 - expected 1 todo, got %d", len(todos))
+
+	// 9. User A lists todos — should see only their own
+	listReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listReq.Header.Set("Authorization", "Bearer "+tokenA)
+	resp, err = client.Do(listReq)
+	if err != nil {
+		t.Fatalf("Step 9 - GET failed: %v", err)
 	}
-	if !todos[0].Completed {
-		t.Error("Step 5 - expected todo to be completed")
+	var todosA []Todo
+	json.NewDecoder(resp.Body).Decode(&todosA)
+	resp.Body.Close()
+	if len(todosA) != 1 {
+		t.Fatalf("Step 9 - expected 1 todo for User A, got %d", len(todosA))
+	}
+	if todosA[0].Title != "User A task" {
+		t.Errorf("Step 9 - expected 'User A task', got '%s'", todosA[0].Title)
 	}
 
-	// 6. DELETE /api/todos/{id} — remove the todo
-	delReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10), nil)
+	// 10. User B lists todos — should see only their own
+	listReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listReq.Header.Set("Authorization", "Bearer "+tokenB)
+	resp, err = client.Do(listReq)
+	if err != nil {
+		t.Fatalf("Step 10 - GET failed: %v", err)
+	}
+	var todosB []Todo
+	json.NewDecoder(resp.Body).Decode(&todosB)
+	resp.Body.Close()
+	if len(todosB) != 1 {
+		t.Fatalf("Step 10 - expected 1 todo for User B, got %d", len(todosB))
+	}
+	if todosB[0].Title != "User B task" {
+		t.Errorf("Step 10 - expected 'User B task', got '%s'", todosB[0].Title)
+	}
+
+	// 11. User B tries to delete User A's todo → 404
+	delReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/todos/"+strconv.FormatInt(createdTodoA.ID, 10), nil)
+	delReq.Header.Set("Authorization", "Bearer "+tokenB)
 	resp, err = client.Do(delReq)
 	if err != nil {
-		t.Fatalf("Step 6 - DELETE failed: %v", err)
+		t.Fatalf("Step 11 - DELETE failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("Step 11 - expected 404, got %d", resp.StatusCode)
+	}
+
+	// 12. User A deletes their own todo → 204
+	delReq, _ = http.NewRequest(http.MethodDelete, baseURL+"/api/todos/"+strconv.FormatInt(createdTodoA.ID, 10), nil)
+	delReq.Header.Set("Authorization", "Bearer "+tokenA)
+	resp, err = client.Do(delReq)
+	if err != nil {
+		t.Fatalf("Step 12 - DELETE failed: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("Step 6 - expected 204, got %d", resp.StatusCode)
+		t.Fatalf("Step 12 - expected 204, got %d", resp.StatusCode)
 	}
 
-	// 7. GET /api/todos — should be empty again
-	resp, err = client.Get(baseURL + "/api/todos")
+	// 13. User A lists → empty
+	listReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listReq.Header.Set("Authorization", "Bearer "+tokenA)
+	resp, err = client.Do(listReq)
 	if err != nil {
-		t.Fatalf("Step 7 - GET failed: %v", err)
+		t.Fatalf("Step 13 - GET failed: %v", err)
 	}
-	json.NewDecoder(resp.Body).Decode(&todos)
+	json.NewDecoder(resp.Body).Decode(&todosA)
 	resp.Body.Close()
-	if len(todos) != 0 {
-		t.Fatalf("Step 7 - expected 0 todos, got %d", len(todos))
+	if len(todosA) != 0 {
+		t.Fatalf("Step 13 - expected 0 todos for User A, got %d", len(todosA))
 	}
 }
