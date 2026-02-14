@@ -36,5 +36,5 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-.vscode/
-.claude/
+*.vscode/
+*.claude/
