@@ -550,6 +550,153 @@ func TestHandleDeleteTodo_NotFound(t *testing.T) {
 	}
 }
 
+// --- Soft Delete Handler Tests ---
+
+func TestHandleDeleteTodo_SoftDelete(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	// Create a todo
+	todo, err := CreateTodo(db, "Soft delete me", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	// DELETE the todo
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/todos/"+strconv.FormatInt(todo.ID, 10), nil)
+	delReq.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	delReq = injectUserID(delReq, user.ID)
+	delW := httptest.NewRecorder()
+
+	handleDeleteTodo(db)(delW, delReq)
+
+	if delW.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", delW.Code)
+	}
+
+	// GET todos — should be empty
+	listReq := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	listReq = injectUserID(listReq, user.ID)
+	listW := httptest.NewRecorder()
+
+	handleListTodos(db)(listW, listReq)
+
+	var todos []Todo
+	if err := json.NewDecoder(listW.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(todos) != 0 {
+		t.Errorf("expected 0 todos after soft delete, got %d", len(todos))
+	}
+
+	// Verify record still exists in DB
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM todos WHERE id = ?", todo.ID).Scan(&count)
+	if err != nil {
+		t.Fatalf("QueryRow failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected record to persist in DB, got count %d", count)
+	}
+}
+
+// --- UpdateTodoTitle Handler Tests ---
+
+func TestHandleUpdateTodoTitle_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Original title", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	body := `{"title":"New title"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/todos/"+strconv.FormatInt(todo.ID, 10)+"/title", bytes.NewBufferString(body))
+	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleUpdateTodoTitle(db)(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", w.Code)
+	}
+
+	// Verify title was updated via GET
+	listReq := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	listReq = injectUserID(listReq, user.ID)
+	listW := httptest.NewRecorder()
+
+	handleListTodos(db)(listW, listReq)
+
+	var todos []Todo
+	if err := json.NewDecoder(listW.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(todos))
+	}
+	if todos[0].Title != "New title" {
+		t.Errorf("expected title 'New title', got '%s'", todos[0].Title)
+	}
+}
+
+func TestHandleUpdateTodoTitle_EmptyTitle(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Original", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	body := `{"title":""}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/todos/"+strconv.FormatInt(todo.ID, 10)+"/title", bytes.NewBufferString(body))
+	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleUpdateTodoTitle(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if errResp["error"] != "title cannot be empty" {
+		t.Errorf("expected 'title cannot be empty', got '%s'", errResp["error"])
+	}
+}
+
+func TestHandleUpdateTodoTitle_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"title":"Some title"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/todos/999/title", bytes.NewBufferString(body))
+	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleUpdateTodoTitle(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if errResp["error"] != "todo not found" {
+		t.Errorf("expected 'todo not found', got '%s'", errResp["error"])
+	}
+}
+
 func TestCORSMiddleware(t *testing.T) {
 	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -31,6 +31,7 @@ func main() {
 	protected.HandleFunc("GET /api/todos", handleListTodos(db))
 	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
 	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}/title", handleUpdateTodoTitle(db))
 	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
 
 	mux.Handle("/api/todos", jwtMiddleware(protected))

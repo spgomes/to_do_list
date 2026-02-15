@@ -14,6 +14,7 @@ var (
 	ErrEmptyTitle     = errors.New("title cannot be empty")
 	ErrTitleTooLong   = errors.New("title exceeds maximum length")
 	ErrNotFound       = errors.New("todo not found")
+	ErrAlreadyDeleted = errors.New("todo already deleted")
 	ErrDuplicateEmail = errors.New("email already registered")
 	ErrUserNotFound   = errors.New("user not found")
 )
@@ -59,13 +60,18 @@ func InitDB(dbPath string) (*sql.DB, error) {
 			title      TEXT    NOT NULL,
 			completed  BOOLEAN NOT NULL DEFAULT 0,
 			created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-			user_id    INTEGER NOT NULL REFERENCES users(id)
+			user_id    INTEGER NOT NULL REFERENCES users(id),
+			deleted_at TEXT    NULL
 		);
 	`
 	if _, err := db.Exec(createTodosTable); err != nil {
 		db.Close()
 		return nil, err
 	}
+
+	// Migration: add deleted_at column for existing databases
+	db.Exec(`ALTER TABLE todos ADD COLUMN deleted_at TEXT NULL`)
+	// Ignore error — column may already exist
 
 	return db, nil
 }
@@ -111,9 +117,9 @@ func GetUserByEmail(db *sql.DB, email string) (User, error) {
 	return user, nil
 }
 
-// GetAllTodos returns all todos for a given user ordered by created_at DESC.
+// GetAllTodos returns all non-deleted todos for a given user ordered by created_at DESC.
 func GetAllTodos(db *sql.DB, userID int64) ([]Todo, error) {
-	rows, err := db.Query("SELECT id, title, completed, created_at, user_id FROM todos WHERE user_id = ? ORDER BY created_at DESC", userID)
+	rows, err := db.Query("SELECT id, title, completed, created_at, user_id FROM todos WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -167,9 +173,9 @@ func CreateTodo(db *sql.DB, title string, userID int64) (Todo, error) {
 }
 
 // UpdateTodoStatus updates the completed status of a todo by ID, scoped to the given user.
-// Returns ErrNotFound if the ID does not exist or does not belong to the user.
+// Returns ErrNotFound if the ID does not exist, does not belong to the user, or is deleted.
 func UpdateTodoStatus(db *sql.DB, id int64, completed bool, userID int64) error {
-	result, err := db.Exec("UPDATE todos SET completed = ? WHERE id = ? AND user_id = ?", completed, id, userID)
+	result, err := db.Exec("UPDATE todos SET completed = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL", completed, id, userID)
 	if err != nil {
 		return err
 	}
@@ -186,10 +192,45 @@ func UpdateTodoStatus(db *sql.DB, id int64, completed bool, userID int64) error 
 	return nil
 }
 
-// DeleteTodo permanently removes a todo by ID, scoped to the given user.
-// Returns ErrNotFound if the ID does not exist or does not belong to the user.
+// UpdateTodoTitle updates only the title of a todo by ID, scoped to the given user.
+// Returns ErrEmptyTitle if the title is empty, ErrTitleTooLong if it exceeds max length,
+// and ErrNotFound if the todo does not exist, does not belong to the user, or is deleted.
+func UpdateTodoTitle(db *sql.DB, id int64, title string, userID int64) error {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ErrEmptyTitle
+	}
+	if len(trimmed) > MaxTitleLength {
+		return ErrTitleTooLong
+	}
+
+	result, err := db.Exec(
+		"UPDATE todos SET title = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+		trimmed, id, userID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+// DeleteTodo performs a soft delete by setting deleted_at to the current timestamp.
+// Returns ErrNotFound if the ID does not exist, does not belong to the user, or is already deleted.
 func DeleteTodo(db *sql.DB, id int64, userID int64) error {
-	result, err := db.Exec("DELETE FROM todos WHERE id = ? AND user_id = ?", id, userID)
+	result, err := db.Exec(
+		"UPDATE todos SET deleted_at = datetime('now') WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+		id, userID,
+	)
 	if err != nil {
 		return err
 	}

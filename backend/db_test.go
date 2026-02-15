@@ -439,6 +439,149 @@ func TestDeleteTodo_WrongUser(t *testing.T) {
 	}
 }
 
+// --- Soft Delete Tests ---
+
+func TestSoftDeleteTodo_HidesFromList(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "To be soft deleted", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := DeleteTodo(db, todo.ID, user.ID); err != nil {
+		t.Fatalf("DeleteTodo failed: %v", err)
+	}
+
+	todos, err := GetAllTodos(db, user.ID)
+	if err != nil {
+		t.Fatalf("GetAllTodos failed: %v", err)
+	}
+	if len(todos) != 0 {
+		t.Errorf("expected 0 todos after soft delete, got %d", len(todos))
+	}
+}
+
+func TestSoftDeleteTodo_RecordPersists(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Persistent record", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := DeleteTodo(db, todo.ID, user.ID); err != nil {
+		t.Fatalf("DeleteTodo failed: %v", err)
+	}
+
+	// Verify the record still exists in the database with deleted_at set
+	var deletedAt sql.NullString
+	err = db.QueryRow("SELECT deleted_at FROM todos WHERE id = ?", todo.ID).Scan(&deletedAt)
+	if err != nil {
+		t.Fatalf("QueryRow failed: %v", err)
+	}
+	if !deletedAt.Valid {
+		t.Error("expected deleted_at to be set, got NULL")
+	}
+}
+
+func TestSoftDeleteTodo_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	err := DeleteTodo(db, 999, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent ID, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+// --- UpdateTodoTitle Tests ---
+
+func TestUpdateTodoTitle_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Original title", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := UpdateTodoTitle(db, todo.ID, "Updated title", user.ID); err != nil {
+		t.Fatalf("UpdateTodoTitle failed: %v", err)
+	}
+
+	// Verify with direct query
+	var title string
+	err = db.QueryRow("SELECT title FROM todos WHERE id = ?", todo.ID).Scan(&title)
+	if err != nil {
+		t.Fatalf("QueryRow failed: %v", err)
+	}
+	if title != "Updated title" {
+		t.Errorf("expected title 'Updated title', got '%s'", title)
+	}
+}
+
+func TestUpdateTodoTitle_EmptyTitle(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Some title", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	err = UpdateTodoTitle(db, todo.ID, "", user.ID)
+	if err == nil {
+		t.Error("expected error for empty title, got nil")
+	}
+	if !errors.Is(err, ErrEmptyTitle) {
+		t.Errorf("expected ErrEmptyTitle, got: %v", err)
+	}
+}
+
+func TestUpdateTodoTitle_TooLong(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Some title", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	longTitle := strings.Repeat("a", MaxTitleLength+1)
+	err = UpdateTodoTitle(db, todo.ID, longTitle, user.ID)
+	if err == nil {
+		t.Error("expected error for title too long, got nil")
+	}
+	if !errors.Is(err, ErrTitleTooLong) {
+		t.Errorf("expected ErrTitleTooLong, got: %v", err)
+	}
+}
+
+func TestUpdateTodoTitle_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	todo, err := CreateTodo(db, "User1 task", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	err = UpdateTodoTitle(db, todo.ID, "Hijacked title", user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to update title, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
 // --- Integration Test ---
 
 func TestCRUDFlow(t *testing.T) {

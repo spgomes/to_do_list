@@ -201,7 +201,48 @@ func handleUpdateTodo(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// handleDeleteTodo removes a todo permanently for the authenticated user.
+// handleUpdateTodoTitle updates only the title of a todo for the authenticated user.
+// PATCH /api/todos/{id}/title → 204
+func handleUpdateTodoTitle(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid todo ID")
+			return
+		}
+
+		var req struct {
+			Title string `json:"title"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		if err := UpdateTodoTitle(db, id, req.Title, userID); err != nil {
+			if errors.Is(err, ErrEmptyTitle) {
+				writeError(w, http.StatusBadRequest, "title cannot be empty")
+				return
+			}
+			if errors.Is(err, ErrTitleTooLong) {
+				writeError(w, http.StatusBadRequest, "title exceeds maximum length of 255 characters")
+				return
+			}
+			if errors.Is(err, ErrNotFound) {
+				writeError(w, http.StatusNotFound, "todo not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to update todo title")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleDeleteTodo soft-deletes a todo for the authenticated user.
 // DELETE /api/todos/{id} → 204
 func handleDeleteTodo(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
