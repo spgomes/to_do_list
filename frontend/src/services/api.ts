@@ -1,4 +1,5 @@
-import type { Todo } from "../types/todo.ts";
+import type { Tag } from "../types/tag";
+import type { Todo } from "../types/todo";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api";
 
@@ -79,5 +80,62 @@ export async function deleteTodo(id: number): Promise<void> {
     method: "DELETE",
     headers: authHeaders(),
   });
+  return handleVoidResponse(response);
+}
+
+// --- Tags ---
+
+export async function fetchTags(): Promise<Tag[]> {
+  const response = await fetch(`${API_BASE_URL}/tags`, {
+    headers: authHeaders(),
+  });
+  return handleResponse<Tag[]>(response);
+}
+
+export async function createTag(name: string): Promise<Tag> {
+  const response = await fetch(`${API_BASE_URL}/tags`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  return handleResponse<Tag>(response);
+}
+
+export async function updateTag(id: number, name: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tags/${id}`, {
+    method: "PATCH",
+    headers: authHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  return handleVoidResponse(response);
+}
+
+export async function deleteTag(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/tags/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  return handleVoidResponse(response);
+}
+
+export async function addTagToTodo(todoId: number, tagId: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/todos/${todoId}/tags/${tagId}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  return handleVoidResponse(response);
+}
+
+export async function removeTagFromTodo(
+  todoId: number,
+  tagId: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/todos/${todoId}/tags/${tagId}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    }
+  );
   return handleVoidResponse(response);
 }

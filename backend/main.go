@@ -26,16 +26,24 @@ func main() {
 	mux.HandleFunc("POST /api/auth/register", handleRegister(db))
 	mux.HandleFunc("POST /api/auth/login", handleLogin(db))
 
-	// Todo routes (protected by JWT middleware)
+	// Todo and tag routes (protected by JWT middleware)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/todos", handleListTodos(db))
 	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
 	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
 	protected.HandleFunc("PATCH /api/todos/{id}/title", handleUpdateTodoTitle(db))
 	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	protected.HandleFunc("POST /api/todos/{id}/tags/{tagId}", handleAddTagToTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}/tags/{tagId}", handleRemoveTagFromTodo(db))
+	protected.HandleFunc("GET /api/tags", handleListTags(db))
+	protected.HandleFunc("POST /api/tags", handleCreateTag(db))
+	protected.HandleFunc("PATCH /api/tags/{id}", handleUpdateTag(db))
+	protected.HandleFunc("DELETE /api/tags/{id}", handleDeleteTag(db))
 
 	mux.Handle("/api/todos", jwtMiddleware(protected))
 	mux.Handle("/api/todos/", jwtMiddleware(protected))
+	mux.Handle("/api/tags", jwtMiddleware(protected))
+	mux.Handle("/api/tags/", jwtMiddleware(protected))
 
 	handler := loggingMiddleware(corsMiddleware(mux))
 

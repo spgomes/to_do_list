@@ -15,9 +15,16 @@ const mockTodos = [
 
 vi.mock("../../services/api.ts", () => ({
   fetchTodos: vi.fn(),
+  fetchTags: vi.fn(),
   createTodo: vi.fn(),
   updateTodo: vi.fn(),
+  updateTodoTitle: vi.fn(),
   deleteTodo: vi.fn(),
+  createTag: vi.fn(),
+  updateTag: vi.fn(),
+  deleteTag: vi.fn(),
+  addTagToTodo: vi.fn(),
+  removeTagFromTodo: vi.fn(),
 }));
 
 vi.mock("../../services/auth.ts", () => ({
@@ -25,11 +32,12 @@ vi.mock("../../services/auth.ts", () => ({
   loginUser: vi.fn(),
 }));
 
-import { fetchTodos } from "../../services/api.ts";
+import { fetchTodos, fetchTags } from "../../services/api.ts";
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  vi.mocked(fetchTags).mockResolvedValue([]);
 });
 
 function renderApp(initialEntries = ["/"]) {
@@ -77,6 +85,7 @@ describe("App", () => {
   it("shows loading spinner with role status during load when authenticated", () => {
     localStorage.setItem("token", "fake-token");
     vi.mocked(fetchTodos).mockReturnValue(new Promise(() => {}));
+    vi.mocked(fetchTags).mockReturnValue(new Promise(() => {}));
 
     renderApp();
 

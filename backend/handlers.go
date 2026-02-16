@@ -123,8 +123,8 @@ func handleLogin(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// handleListTodos returns all todos for the authenticated user as a JSON array.
-// GET /api/todos → 200 []Todo
+// handleListTodos returns all todos for the authenticated user as a JSON array, with tags per todo.
+// GET /api/todos → 200 []Todo (each with tags)
 func handleListTodos(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserIDFromContext(r)
@@ -132,6 +132,14 @@ func handleListTodos(db *sql.DB) http.HandlerFunc {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to fetch todos")
 			return
+		}
+		for i := range todos {
+			tags, err := ListTodoTags(db, todos[i].ID, userID)
+			if err != nil {
+				todos[i].Tags = nil
+				continue
+			}
+			todos[i].Tags = tags
 		}
 		writeJSON(w, http.StatusOK, todos)
 	}
@@ -260,6 +268,197 @@ func handleDeleteTodo(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "failed to delete todo")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// --- Tag Handlers ---
+
+// handleListTags returns all tags for the authenticated user.
+// GET /api/tags → 200 []Tag
+func handleListTags(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		tags, err := ListTags(db, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to fetch tags")
+			return
+		}
+		writeJSON(w, http.StatusOK, tags)
+	}
+}
+
+// handleCreateTag creates a new tag for the authenticated user.
+// POST /api/tags → 201 Tag
+func handleCreateTag(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		tag, err := CreateTag(db, req.Name, userID)
+		if err != nil {
+			if errors.Is(err, ErrEmptyTagName) {
+				writeError(w, http.StatusBadRequest, "tag name cannot be empty")
+				return
+			}
+			if errors.Is(err, ErrTagNameTooLong) {
+				writeError(w, http.StatusBadRequest, "tag name exceeds maximum length of 50 characters")
+				return
+			}
+			if errors.Is(err, ErrDuplicateTag) {
+				writeError(w, http.StatusConflict, "tag with this name already exists")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to create tag")
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, tag)
+	}
+}
+
+// handleUpdateTag updates the name of a tag for the authenticated user.
+// PATCH /api/tags/{id} → 204
+func handleUpdateTag(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid tag ID")
+			return
+		}
+
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		if err := UpdateTagName(db, id, req.Name, userID); err != nil {
+			if errors.Is(err, ErrEmptyTagName) {
+				writeError(w, http.StatusBadRequest, "tag name cannot be empty")
+				return
+			}
+			if errors.Is(err, ErrTagNameTooLong) {
+				writeError(w, http.StatusBadRequest, "tag name exceeds maximum length of 50 characters")
+				return
+			}
+			if errors.Is(err, ErrDuplicateTag) {
+				writeError(w, http.StatusConflict, "tag with this name already exists")
+				return
+			}
+			if errors.Is(err, ErrTagNotFound) {
+				writeError(w, http.StatusNotFound, "tag not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to update tag")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleDeleteTag deletes a tag for the authenticated user.
+// DELETE /api/tags/{id} → 204
+func handleDeleteTag(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid tag ID")
+			return
+		}
+
+		if err := DeleteTag(db, id, userID); err != nil {
+			if errors.Is(err, ErrTagNotFound) {
+				writeError(w, http.StatusNotFound, "tag not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to delete tag")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleAddTagToTodo associates a tag with a todo for the authenticated user.
+// POST /api/todos/{id}/tags/{tagId} → 204
+func handleAddTagToTodo(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		todoIDStr := r.PathValue("id")
+		tagIDStr := r.PathValue("tagId")
+		todoID, err := strconv.ParseInt(todoIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid todo ID")
+			return
+		}
+		tagID, err := strconv.ParseInt(tagIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid tag ID")
+			return
+		}
+
+		if err := AddTagToTodo(db, todoID, tagID, userID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeError(w, http.StatusNotFound, "todo not found")
+				return
+			}
+			if errors.Is(err, ErrTagNotFound) {
+				writeError(w, http.StatusNotFound, "tag not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to add tag to todo")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleRemoveTagFromTodo removes the association between a tag and a todo.
+// DELETE /api/todos/{id}/tags/{tagId} → 204
+func handleRemoveTagFromTodo(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		todoIDStr := r.PathValue("id")
+		tagIDStr := r.PathValue("tagId")
+		todoID, err := strconv.ParseInt(todoIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid todo ID")
+			return
+		}
+		tagID, err := strconv.ParseInt(tagIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid tag ID")
+			return
+		}
+
+		if err := RemoveTagFromTodo(db, todoID, tagID, userID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeError(w, http.StatusNotFound, "todo or tag association not found")
+				return
+			}
+			if errors.Is(err, ErrTagNotFound) {
+				writeError(w, http.StatusNotFound, "tag not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to remove tag from todo")
 			return
 		}
 

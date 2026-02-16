@@ -758,9 +758,18 @@ func TestAPIFullAuthAndCRUDFlow(t *testing.T) {
 	protected.HandleFunc("GET /api/todos", handleListTodos(db))
 	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
 	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}/title", handleUpdateTodoTitle(db))
 	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	protected.HandleFunc("POST /api/todos/{id}/tags/{tagId}", handleAddTagToTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}/tags/{tagId}", handleRemoveTagFromTodo(db))
+	protected.HandleFunc("GET /api/tags", handleListTags(db))
+	protected.HandleFunc("POST /api/tags", handleCreateTag(db))
+	protected.HandleFunc("PATCH /api/tags/{id}", handleUpdateTag(db))
+	protected.HandleFunc("DELETE /api/tags/{id}", handleDeleteTag(db))
 	mux.Handle("/api/todos", jwtMiddleware(protected))
 	mux.Handle("/api/todos/", jwtMiddleware(protected))
+	mux.Handle("/api/tags", jwtMiddleware(protected))
+	mux.Handle("/api/tags/", jwtMiddleware(protected))
 
 	srv := httptest.NewServer(corsMiddleware(mux))
 	defer srv.Close()
@@ -943,5 +952,418 @@ func TestAPIFullAuthAndCRUDFlow(t *testing.T) {
 	resp.Body.Close()
 	if len(todosA) != 0 {
 		t.Fatalf("Step 13 - expected 0 todos for User A, got %d", len(todosA))
+	}
+}
+
+// --- Tag API integration tests (handler-level with injectUserID) ---
+
+func TestHandleListTags_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tags", nil)
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTags(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var tags []Tag
+	if err := json.NewDecoder(w.Body).Decode(&tags); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(tags))
+	}
+}
+
+func TestHandleCreateTag_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"name":"work"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tags", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateTag(db)(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", w.Code)
+	}
+
+	var tag Tag
+	if err := json.NewDecoder(w.Body).Decode(&tag); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if tag.Name != "work" {
+		t.Errorf("expected name 'work', got '%s'", tag.Name)
+	}
+	if tag.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+}
+
+func TestHandleCreateTag_EmptyName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"name":""}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tags", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateTag(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if errResp["error"] != "tag name cannot be empty" {
+		t.Errorf("expected tag name error, got '%s'", errResp["error"])
+	}
+}
+
+func TestHandleCreateTag_Duplicate_Conflict(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	CreateTag(db, "work", user.ID)
+
+	body := `{"name":"work"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/tags", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateTag(db)(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if errResp["error"] != "tag with this name already exists" {
+		t.Errorf("expected duplicate tag error, got '%s'", errResp["error"])
+	}
+}
+
+func TestHandleUpdateTag_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"name":"newname"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/tags/999", bytes.NewBufferString(body))
+	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleUpdateTag(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleDeleteTag_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/tags/999", nil)
+	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleDeleteTag(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleAddTagToTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, _ := CreateTodo(db, "Task", user.ID)
+	tag, _ := CreateTag(db, "work", user.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/todos/"+strconv.FormatInt(todo.ID, 10)+"/tags/"+strconv.FormatInt(tag.ID, 10), nil)
+	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req.SetPathValue("tagId", strconv.FormatInt(tag.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleAddTagToTodo(db)(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d", w.Code)
+	}
+}
+
+func TestHandleAddTagToTodo_TodoNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, _ := CreateTag(db, "work", user.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/todos/999/tags/"+strconv.FormatInt(tag.ID, 10), nil)
+	req.SetPathValue("id", "999")
+	req.SetPathValue("tagId", strconv.FormatInt(tag.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleAddTagToTodo(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleAddTagToTodo_TagNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, _ := CreateTodo(db, "Task", user.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/todos/"+strconv.FormatInt(todo.ID, 10)+"/tags/999", nil)
+	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req.SetPathValue("tagId", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleAddTagToTodo(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleListTodos_ReturnsTags(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, _ := CreateTodo(db, "My task", user.ID)
+	tag, _ := CreateTag(db, "work", user.ID)
+	AddTagToTodo(db, todo.ID, tag.ID, user.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodos(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var todos []Todo
+	if err := json.NewDecoder(w.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(todos))
+	}
+	if len(todos[0].Tags) != 1 {
+		t.Fatalf("expected 1 tag on todo, got %d", len(todos[0].Tags))
+	}
+	if todos[0].Tags[0].Name != "work" {
+		t.Errorf("expected tag name 'work', got '%s'", todos[0].Tags[0].Name)
+	}
+}
+
+// TestAPITagsFullFlow runs a full integration flow: create tag → list → rename → add to todo → list todos with tags → remove → delete tag.
+func TestAPITagsFullFlow(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	token, err := generateJWT(user.ID)
+	if err != nil {
+		t.Fatalf("generateJWT: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/auth/register", handleRegister(db))
+	mux.HandleFunc("POST /api/auth/login", handleLogin(db))
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/todos", handleListTodos(db))
+	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}/title", handleUpdateTodoTitle(db))
+	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	protected.HandleFunc("POST /api/todos/{id}/tags/{tagId}", handleAddTagToTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}/tags/{tagId}", handleRemoveTagFromTodo(db))
+	protected.HandleFunc("GET /api/tags", handleListTags(db))
+	protected.HandleFunc("POST /api/tags", handleCreateTag(db))
+	protected.HandleFunc("PATCH /api/tags/{id}", handleUpdateTag(db))
+	protected.HandleFunc("DELETE /api/tags/{id}", handleDeleteTag(db))
+	mux.Handle("/api/todos", jwtMiddleware(protected))
+	mux.Handle("/api/todos/", jwtMiddleware(protected))
+	mux.Handle("/api/tags", jwtMiddleware(protected))
+	mux.Handle("/api/tags/", jwtMiddleware(protected))
+
+	srv := httptest.NewServer(corsMiddleware(mux))
+	defer srv.Close()
+
+	client := srv.Client()
+	baseURL := srv.URL
+
+	// 1. Create tag
+	createTagReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/tags", bytes.NewBufferString(`{"name":"work"}`))
+	createTagReq.Header.Set("Content-Type", "application/json")
+	createTagReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(createTagReq)
+	if err != nil {
+		t.Fatalf("create tag: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var createdTag Tag
+	json.NewDecoder(resp.Body).Decode(&createdTag)
+	resp.Body.Close()
+	if createdTag.Name != "work" {
+		t.Errorf("expected tag name work, got %s", createdTag.Name)
+	}
+
+	// 2. List tags
+	listTagsReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
+	listTagsReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTagsReq)
+	if err != nil {
+		t.Fatalf("list tags: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var tags []Tag
+	json.NewDecoder(resp.Body).Decode(&tags)
+	resp.Body.Close()
+	if len(tags) != 1 || tags[0].Name != "work" {
+		t.Fatalf("expected 1 tag 'work', got %v", tags)
+	}
+
+	// 3. Rename tag
+	patchReq, _ := http.NewRequest(http.MethodPatch, baseURL+"/api/tags/"+strconv.FormatInt(createdTag.ID, 10), bytes.NewBufferString(`{"name":"office"}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(patchReq)
+	if err != nil {
+		t.Fatalf("update tag: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 4. Create todo
+	createTodoReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/todos", bytes.NewBufferString(`{"title":"Task one"}`))
+	createTodoReq.Header.Set("Content-Type", "application/json")
+	createTodoReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(createTodoReq)
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var createdTodo Todo
+	json.NewDecoder(resp.Body).Decode(&createdTodo)
+	resp.Body.Close()
+
+	// 5. Add tag to todo
+	addTagReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10)+"/tags/"+strconv.FormatInt(createdTag.ID, 10), nil)
+	addTagReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(addTagReq)
+	if err != nil {
+		t.Fatalf("add tag to todo: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 6. List todos — should include tags
+	listTodosReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listTodosReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTodosReq)
+	if err != nil {
+		t.Fatalf("list todos: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var todos []Todo
+	json.NewDecoder(resp.Body).Decode(&todos)
+	resp.Body.Close()
+	if len(todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(todos))
+	}
+	if len(todos[0].Tags) != 1 {
+		t.Fatalf("expected 1 tag on todo, got %d", len(todos[0].Tags))
+	}
+	if todos[0].Tags[0].Name != "office" {
+		t.Errorf("expected tag name office after rename, got %s", todos[0].Tags[0].Name)
+	}
+
+	// 7. Remove tag from todo
+	removeTagReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10)+"/tags/"+strconv.FormatInt(createdTag.ID, 10), nil)
+	removeTagReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(removeTagReq)
+	if err != nil {
+		t.Fatalf("remove tag: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 8. List todos again — no tags (decode into fresh variable)
+	listTodosReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listTodosReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTodosReq)
+	if err != nil {
+		t.Fatalf("list todos: %v", err)
+	}
+	var todosAfterRemove []Todo
+	if err := json.NewDecoder(resp.Body).Decode(&todosAfterRemove); err != nil {
+		t.Fatalf("decode todos after remove: %v", err)
+	}
+	resp.Body.Close()
+	if len(todosAfterRemove) != 1 {
+		t.Fatalf("expected 1 todo after remove, got %d", len(todosAfterRemove))
+	}
+	if len(todosAfterRemove[0].Tags) != 0 {
+		t.Fatalf("expected todo with 0 tags after remove, got %d", len(todosAfterRemove[0].Tags))
+	}
+
+	// 9. Delete tag
+	delTagReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/tags/"+strconv.FormatInt(createdTag.ID, 10), nil)
+	delTagReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(delTagReq)
+	if err != nil {
+		t.Fatalf("delete tag: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 10. List tags — empty
+	listTagsReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
+	listTagsReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTagsReq)
+	if err != nil {
+		t.Fatalf("list tags: %v", err)
+	}
+	json.NewDecoder(resp.Body).Decode(&tags)
+	resp.Body.Close()
+	if len(tags) != 0 {
+		t.Fatalf("expected 0 tags, got %d", len(tags))
 	}
 }

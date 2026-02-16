@@ -666,3 +666,688 @@ func TestCRUDFlow(t *testing.T) {
 		t.Fatalf("Step 9 - expected 0 todos, got %d", len(todos))
 	}
 }
+
+// --- Tag Tests ---
+
+func TestInitDB_CreatesTagsTables(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Verify that the tags table exists
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='tags'").Scan(&name)
+	if err != nil {
+		t.Fatalf("expected tags table to exist, got error: %v", err)
+	}
+	if name != "tags" {
+		t.Errorf("expected table name 'tags', got '%s'", name)
+	}
+
+	// Verify that the todo_tags table exists
+	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='todo_tags'").Scan(&name)
+	if err != nil {
+		t.Fatalf("expected todo_tags table to exist, got error: %v", err)
+	}
+	if name != "todo_tags" {
+		t.Errorf("expected table name 'todo_tags', got '%s'", name)
+	}
+}
+
+func TestCreateTag_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if tag.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+	if tag.Name != "work" {
+		t.Errorf("expected name 'work', got '%s'", tag.Name)
+	}
+	if tag.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+	if tag.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %d", user.ID, tag.UserID)
+	}
+}
+
+func TestCreateTag_EmptyName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	testCases := []struct {
+		name string
+		tagName string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"tab only", "\t"},
+		{"newline only", "\n"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CreateTag(db, tc.tagName, user.ID)
+			if err == nil {
+				t.Error("expected error for empty tag name, got nil")
+			}
+			if !errors.Is(err, ErrEmptyTagName) {
+				t.Errorf("expected ErrEmptyTagName, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateTag_NameTooLong(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	longName := strings.Repeat("a", MaxTagNameLength+1)
+	_, err := CreateTag(db, longName, user.ID)
+	if err == nil {
+		t.Error("expected error for tag name exceeding max length, got nil")
+	}
+	if !errors.Is(err, ErrTagNameTooLong) {
+		t.Errorf("expected ErrTagNameTooLong, got: %v", err)
+	}
+}
+
+func TestCreateTag_NameAtMaxLength(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	maxName := strings.Repeat("a", MaxTagNameLength)
+	tag, err := CreateTag(db, maxName, user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag with max length name failed: %v", err)
+	}
+	if len(tag.Name) != MaxTagNameLength {
+		t.Errorf("expected tag name length %d, got %d", MaxTagNameLength, len(tag.Name))
+	}
+}
+
+func TestCreateTag_DuplicateName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	_, err := CreateTag(db, "duplicate", user.ID)
+	if err != nil {
+		t.Fatalf("first CreateTag failed: %v", err)
+	}
+
+	_, err = CreateTag(db, "duplicate", user.ID)
+	if err == nil {
+		t.Error("expected error for duplicate tag name, got nil")
+	}
+	if !errors.Is(err, ErrDuplicateTag) {
+		t.Errorf("expected ErrDuplicateTag, got: %v", err)
+	}
+}
+
+func TestCreateTag_TrimsWhitespace(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "  work  ", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+	if tag.Name != "work" {
+		t.Errorf("expected trimmed name 'work', got '%s'", tag.Name)
+	}
+}
+
+func TestListTags_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tags, err := ListTags(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(tags))
+	}
+
+	if tags == nil {
+		t.Error("expected empty slice, got nil")
+	}
+}
+
+func TestListTags_MultipleTags(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	names := []string{"work", "home", "personal"}
+	for _, name := range names {
+		if _, err := CreateTag(db, name, user.ID); err != nil {
+			t.Fatalf("CreateTag(%q) failed: %v", name, err)
+		}
+	}
+
+	tags, err := ListTags(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+
+	if len(tags) != 3 {
+		t.Fatalf("expected 3 tags, got %d", len(tags))
+	}
+
+	foundNames := make(map[string]bool)
+	for _, tag := range tags {
+		foundNames[tag.Name] = true
+	}
+	for _, name := range names {
+		if !foundNames[name] {
+			t.Errorf("expected to find tag with name %q", name)
+		}
+	}
+}
+
+func TestListTags_UserIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	CreateTag(db, "User1 Tag", user1.ID)
+	CreateTag(db, "User2 Tag", user2.ID)
+
+	tags1, err := ListTags(db, user1.ID)
+	if err != nil {
+		t.Fatalf("ListTags(user1) failed: %v", err)
+	}
+	if len(tags1) != 1 {
+		t.Errorf("expected 1 tag for user1, got %d", len(tags1))
+	}
+	if tags1[0].Name != "User1 Tag" {
+		t.Errorf("expected 'User1 Tag', got '%s'", tags1[0].Name)
+	}
+
+	tags2, err := ListTags(db, user2.ID)
+	if err != nil {
+		t.Fatalf("ListTags(user2) failed: %v", err)
+	}
+	if len(tags2) != 1 {
+		t.Errorf("expected 1 tag for user2, got %d", len(tags2))
+	}
+	if tags2[0].Name != "User2 Tag" {
+		t.Errorf("expected 'User2 Tag', got '%s'", tags2[0].Name)
+	}
+}
+
+func TestUpdateTagName_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "oldname", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if err := UpdateTagName(db, tag.ID, "newname", user.ID); err != nil {
+		t.Fatalf("UpdateTagName failed: %v", err)
+	}
+
+	// Verify with direct query
+	var name string
+	err = db.QueryRow("SELECT name FROM tags WHERE id = ?", tag.ID).Scan(&name)
+	if err != nil {
+		t.Fatalf("QueryRow failed: %v", err)
+	}
+	if name != "newname" {
+		t.Errorf("expected name 'newname', got '%s'", name)
+	}
+}
+
+func TestUpdateTagName_EmptyName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "somename", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = UpdateTagName(db, tag.ID, "", user.ID)
+	if err == nil {
+		t.Error("expected error for empty name, got nil")
+	}
+	if !errors.Is(err, ErrEmptyTagName) {
+		t.Errorf("expected ErrEmptyTagName, got: %v", err)
+	}
+}
+
+func TestUpdateTagName_TooLong(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "somename", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	longName := strings.Repeat("a", MaxTagNameLength+1)
+	err = UpdateTagName(db, tag.ID, longName, user.ID)
+	if err == nil {
+		t.Error("expected error for name too long, got nil")
+	}
+	if !errors.Is(err, ErrTagNameTooLong) {
+		t.Errorf("expected ErrTagNameTooLong, got: %v", err)
+	}
+}
+
+func TestUpdateTagName_DuplicateName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	_, err := CreateTag(db, "tag1", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(tag1) failed: %v", err)
+	}
+
+	tag2, err := CreateTag(db, "tag2", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(tag2) failed: %v", err)
+	}
+
+	// Try to rename tag2 to tag1
+	err = UpdateTagName(db, tag2.ID, "tag1", user.ID)
+	if err == nil {
+		t.Error("expected error for duplicate name, got nil")
+	}
+	if !errors.Is(err, ErrDuplicateTag) {
+		t.Errorf("expected ErrDuplicateTag, got: %v", err)
+	}
+}
+
+func TestUpdateTagName_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	tag, err := CreateTag(db, "User1 Tag", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = UpdateTagName(db, tag.ID, "Hijacked", user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to update, got nil")
+	}
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("expected ErrTagNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteTag_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "To be deleted", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if err := DeleteTag(db, tag.ID, user.ID); err != nil {
+		t.Fatalf("DeleteTag failed: %v", err)
+	}
+
+	tags, err := ListTags(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags after deletion, got %d", len(tags))
+	}
+}
+
+func TestDeleteTag_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	err := DeleteTag(db, 999, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent ID, got nil")
+	}
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("expected ErrTagNotFound, got: %v", err)
+	}
+}
+
+func TestDeleteTag_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	tag, err := CreateTag(db, "User1 Tag", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = DeleteTag(db, tag.ID, user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to delete, got nil")
+	}
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("expected ErrTagNotFound, got: %v", err)
+	}
+
+	// Verify the tag still exists for user1
+	tags, err := ListTags(db, user1.ID)
+	if err != nil {
+		t.Fatalf("ListTags failed: %v", err)
+	}
+	if len(tags) != 1 {
+		t.Errorf("expected 1 tag still exists for user1, got %d", len(tags))
+	}
+}
+
+// --- Todo-Tag Relationship Tests ---
+
+func TestAddTagToTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if err := AddTagToTodo(db, todo.ID, tag.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo failed: %v", err)
+	}
+
+	// Verify the association
+	tags, err := ListTodoTags(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoTags failed: %v", err)
+	}
+	if len(tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d", len(tags))
+	}
+	if tags[0].ID != tag.ID {
+		t.Errorf("expected tag ID %d, got %d", tag.ID, tags[0].ID)
+	}
+}
+
+func TestAddTagToTodo_Idempotent(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	// Add the same tag twice
+	if err := AddTagToTodo(db, todo.ID, tag.ID, user.ID); err != nil {
+		t.Fatalf("first AddTagToTodo failed: %v", err)
+	}
+	if err := AddTagToTodo(db, todo.ID, tag.ID, user.ID); err != nil {
+		t.Fatalf("second AddTagToTodo failed: %v", err)
+	}
+
+	// Verify only one association exists
+	tags, err := ListTodoTags(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoTags failed: %v", err)
+	}
+	if len(tags) != 1 {
+		t.Fatalf("expected 1 tag (idempotent), got %d", len(tags))
+	}
+}
+
+func TestAddTagToTodo_TodoNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = AddTagToTodo(db, 999, tag.ID, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent todo, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestAddTagToTodo_TagNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	err = AddTagToTodo(db, todo.ID, 999, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent tag, got nil")
+	}
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("expected ErrTagNotFound, got: %v", err)
+	}
+}
+
+func TestAddTagToTodo_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	todo, err := CreateTodo(db, "User1 task", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag, err := CreateTag(db, "User2 tag", user2.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = AddTagToTodo(db, todo.ID, tag.ID, user1.ID)
+	if err == nil {
+		t.Error("expected error when tag belongs to different user, got nil")
+	}
+	if !errors.Is(err, ErrTagNotFound) {
+		t.Errorf("expected ErrTagNotFound, got: %v", err)
+	}
+}
+
+func TestRemoveTagFromTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	if err := AddTagToTodo(db, todo.ID, tag.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo failed: %v", err)
+	}
+
+	if err := RemoveTagFromTodo(db, todo.ID, tag.ID, user.ID); err != nil {
+		t.Fatalf("RemoveTagFromTodo failed: %v", err)
+	}
+
+	// Verify the association is removed
+	tags, err := ListTodoTags(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoTags failed: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags after removal, got %d", len(tags))
+	}
+}
+
+func TestRemoveTagFromTodo_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag failed: %v", err)
+	}
+
+	err = RemoveTagFromTodo(db, todo.ID, tag.ID, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent association, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestListTodoTags_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tags, err := ListTodoTags(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoTags failed: %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(tags))
+	}
+
+	if tags == nil {
+		t.Error("expected empty slice, got nil")
+	}
+}
+
+func TestListTodoTags_MultipleTags(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	tag1, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(work) failed: %v", err)
+	}
+
+	tag2, err := CreateTag(db, "urgent", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(urgent) failed: %v", err)
+	}
+
+	if err := AddTagToTodo(db, todo.ID, tag1.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo(tag1) failed: %v", err)
+	}
+	if err := AddTagToTodo(db, todo.ID, tag2.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo(tag2) failed: %v", err)
+	}
+
+	tags, err := ListTodoTags(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoTags failed: %v", err)
+	}
+
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+
+	foundIDs := make(map[int64]bool)
+	for _, tag := range tags {
+		foundIDs[tag.ID] = true
+	}
+	if !foundIDs[tag1.ID] {
+		t.Error("expected to find tag1")
+	}
+	if !foundIDs[tag2.ID] {
+		t.Error("expected to find tag2")
+	}
+}
+
+func TestListTodoTags_TodoNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	_, err := ListTodoTags(db, 999, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent todo, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestListTodoTags_WrongUser(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	todo, err := CreateTodo(db, "User1 task", user1.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	_, err = ListTodoTags(db, todo.ID, user2.ID)
+	if err == nil {
+		t.Error("expected error when wrong user tries to list tags, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestListTodoTags_DeletedTodo(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := DeleteTodo(db, todo.ID, user.ID); err != nil {
+		t.Fatalf("DeleteTodo failed: %v", err)
+	}
+
+	_, err = ListTodoTags(db, todo.ID, user.ID)
+	if err == nil {
+		t.Error("expected error for deleted todo, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
