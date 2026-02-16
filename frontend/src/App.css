@@ -253,6 +253,51 @@
   color: var(--color-text-secondary);
 }
 
+.todo-title-edit {
+  flex: 1;
+  font-size: var(--font-size-base);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  min-width: 0;
+}
+
+.todo-title-edit:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+
+.todo-title-edit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.edit-button {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+  min-height: 36px;
+  min-width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.edit-button:hover {
+  background-color: var(--color-primary-bg);
+}
+
+.edit-button:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  outline: none;
+}
+
 .delete-button {
   padding: var(--spacing-xs) var(--spacing-sm);
   color: var(--color-danger);

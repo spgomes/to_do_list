@@ -65,6 +65,15 @@ export async function updateTodo(id: number, completed: boolean): Promise<void> 
   return handleVoidResponse(response);
 }
 
+export async function updateTodoTitle(id: number, title: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/todos/${id}/title`, {
+    method: "PATCH",
+    headers: authHeaders(),
+    body: JSON.stringify({ title }),
+  });
+  return handleVoidResponse(response);
+}
+
 export async function deleteTodo(id: number): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/todos/${id}`, {
     method: "DELETE",

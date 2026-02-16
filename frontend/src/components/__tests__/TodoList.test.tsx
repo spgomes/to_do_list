@@ -12,7 +12,12 @@ const todos: Todo[] = [
 describe("TodoList", () => {
   it("renders multiple TodoItems", () => {
     render(
-      <TodoList todos={todos} onToggle={vi.fn()} onDelete={vi.fn()} />
+      <TodoList
+        todos={todos}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />
     );
 
     expect(screen.getByText("Task one")).toBeDefined();
@@ -21,7 +26,12 @@ describe("TodoList", () => {
 
   it("shows empty message when list is empty", () => {
     render(
-      <TodoList todos={[]} onToggle={vi.fn()} onDelete={vi.fn()} />
+      <TodoList
+        todos={[]}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />
     );
 
     expect(screen.getByText("Nenhuma tarefa cadastrada")).toBeDefined();
@@ -29,7 +39,12 @@ describe("TodoList", () => {
 
   it("renders list with aria-label", () => {
     render(
-      <TodoList todos={todos} onToggle={vi.fn()} onDelete={vi.fn()} />
+      <TodoList
+        todos={todos}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />
     );
 
     expect(screen.getByRole("list", { name: "Lista de tarefas" })).toBeDefined();
@@ -37,7 +52,12 @@ describe("TodoList", () => {
 
   it("renders list with todo-list class", () => {
     render(
-      <TodoList todos={todos} onToggle={vi.fn()} onDelete={vi.fn()} />
+      <TodoList
+        todos={todos}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />
     );
 
     const list = screen.getByRole("list");
@@ -46,7 +66,12 @@ describe("TodoList", () => {
 
   it("renders empty message with empty-message class", () => {
     render(
-      <TodoList todos={[]} onToggle={vi.fn()} onDelete={vi.fn()} />
+      <TodoList
+        todos={[]}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={vi.fn()}
+      />
     );
 
     const msg = screen.getByText("Nenhuma tarefa cadastrada");

@@ -472,3 +472,191 @@ test.describe("Full CRUD flow (authenticated)", () => {
     await expect(page.getByText("Tarefa B")).toBeVisible();
   });
 });
+
+// ─── Soft Delete ───────────────────────────────────────────────
+
+test.describe("Soft Delete", () => {
+  let token: string;
+
+  test.beforeEach(async ({ request }) => {
+    token = await registerViaAPI(request, uniqueEmail(), TEST_PASSWORD);
+  });
+
+  test("tarefa removida some da lista imediatamente", async ({
+    page,
+    request,
+  }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Tarefa para remover" },
+    });
+
+    await authenticateInBrowser(page, token);
+    await expect(page.getByText("Tarefa para remover")).toBeVisible();
+
+    page.on("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: /Remover tarefa: Tarefa para remover/ })
+      .click();
+
+    await expect(page.getByText("Tarefa para remover")).not.toBeVisible();
+  });
+
+  test("tarefa removida não reaparece após reload da página", async ({
+    page,
+    request,
+  }) => {
+    const createResp = await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Tarefa deletada via API" },
+    });
+    const todo = (await createResp.json()) as { id: number };
+
+    await request.delete(`${API_URL}/todos/${todo.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    await authenticateInBrowser(page, token);
+    await expect(
+      page.getByText("Tarefa deletada via API")
+    ).not.toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByText("Tarefa deletada via API")
+    ).not.toBeVisible();
+  });
+
+  test("outras tarefas não são afetadas ao remover uma", async ({
+    page,
+    request,
+  }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Primeira tarefa" },
+    });
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Segunda tarefa" },
+    });
+
+    await authenticateInBrowser(page, token);
+    await expect(page.getByText("Primeira tarefa")).toBeVisible();
+    await expect(page.getByText("Segunda tarefa")).toBeVisible();
+
+    page.on("dialog", (dialog) => dialog.accept());
+    await page
+      .getByRole("button", { name: /Remover tarefa: Primeira tarefa/ })
+      .click();
+
+    await expect(page.getByText("Primeira tarefa")).not.toBeVisible();
+    await expect(page.getByText("Segunda tarefa")).toBeVisible();
+  });
+});
+
+// ─── Edição de Título ──────────────────────────────────────────
+
+test.describe("Edição de Título", () => {
+  let token: string;
+
+  test.beforeEach(async ({ request }) => {
+    token = await registerViaAPI(request, uniqueEmail(), TEST_PASSWORD);
+  });
+
+  test("editar título via Enter salva e exibe o novo texto", async ({
+    page,
+    request,
+  }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Título original" },
+    });
+
+    await authenticateInBrowser(page, token);
+    await expect(page.getByText("Título original")).toBeVisible();
+
+    await page
+      .getByRole("button", { name: /Editar tarefa: Título original/ })
+      .click();
+
+    const editInput = page.getByLabel("Editar título da tarefa");
+    await editInput.clear();
+    await editInput.fill("Título editado");
+    await editInput.press("Enter");
+
+    await expect(page.getByText("Título editado")).toBeVisible();
+    await expect(page.getByText("Título original")).not.toBeVisible();
+  });
+
+  test("novo título persiste após reload da página", async ({
+    page,
+    request,
+  }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Título antes do reload" },
+    });
+
+    await authenticateInBrowser(page, token);
+
+    await page
+      .getByRole("button", {
+        name: /Editar tarefa: Título antes do reload/,
+      })
+      .click();
+
+    const editInput = page.getByLabel("Editar título da tarefa");
+    await editInput.clear();
+    await editInput.fill("Título após reload");
+    await editInput.press("Enter");
+
+    await expect(page.getByText("Título após reload")).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByText("Título após reload")).toBeVisible();
+  });
+
+  test("Escape cancela a edição e restaura o título original", async ({
+    page,
+    request,
+  }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Título original" },
+    });
+
+    await authenticateInBrowser(page, token);
+
+    await page
+      .getByRole("button", { name: /Editar tarefa: Título original/ })
+      .click();
+
+    const editInput = page.getByLabel("Editar título da tarefa");
+    await editInput.fill("Texto descartado");
+    await editInput.press("Escape");
+
+    await expect(page.getByText("Título original")).toBeVisible();
+    await expect(page.getByText("Texto descartado")).not.toBeVisible();
+  });
+
+  test("não é possível salvar título vazio", async ({ page, request }) => {
+    await request.post(`${API_URL}/todos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { title: "Título que permanece" },
+    });
+
+    await authenticateInBrowser(page, token);
+
+    await page
+      .getByRole("button", {
+        name: /Editar tarefa: Título que permanece/,
+      })
+      .click();
+
+    const editInput = page.getByLabel("Editar título da tarefa");
+    await editInput.clear();
+    await editInput.press("Enter");
+
+    await expect(page.getByText("Título que permanece")).toBeVisible();
+  });
+});

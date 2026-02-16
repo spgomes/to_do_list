@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchTodos, createTodo, updateTodo, deleteTodo } from "./api.ts";
+import { fetchTodos, createTodo, updateTodo, updateTodoTitle, deleteTodo } from "./api.ts";
 import type { Todo } from "../types/todo.ts";
 
 const mockFetch = vi.fn();
@@ -142,6 +142,45 @@ describe("updateTodo", () => {
     );
 
     await expect(updateTodo(999, true)).rejects.toThrow("todo not found");
+  });
+});
+
+// --- updateTodoTitle ---
+
+describe("updateTodoTitle", () => {
+  it("faz PATCH /todos/{id}/title com body correto", async () => {
+    localStorage.setItem("token", "my-token");
+    mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
+
+    await updateTodoTitle(5, "Novo título");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/todos/5/title",
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer my-token",
+        },
+        body: JSON.stringify({ title: "Novo título" }),
+      }
+    );
+  });
+
+  it("throws error when API responds 400", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: "title cannot be empty" }, 400)
+    );
+
+    await expect(updateTodoTitle(1, "")).rejects.toThrow("title cannot be empty");
+  });
+
+  it("throws error when API responds 404", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: "todo not found" }, 404)
+    );
+
+    await expect(updateTodoTitle(999, "Title")).rejects.toThrow("todo not found");
   });
 });
 

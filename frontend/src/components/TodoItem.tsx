@@ -1,12 +1,18 @@
+import { useState } from "react";
 import type { Todo } from "../types/todo.ts";
 
 interface TodoItemProps {
   todo: Todo;
   onToggle: (id: number, completed: boolean) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onEdit: (id: number, title: string) => Promise<void>;
 }
 
-export function TodoItem({ todo, onToggle, onDelete }: TodoItemProps) {
+export function TodoItem({ todo, onToggle, onDelete, onEdit }: TodoItemProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(todo.title);
+  const [isSaving, setIsSaving] = useState(false);
+
   function handleToggle() {
     onToggle(todo.id, !todo.completed);
   }
@@ -15,6 +21,33 @@ export function TodoItem({ todo, onToggle, onDelete }: TodoItemProps) {
     if (window.confirm("Tem certeza que deseja remover esta tarefa?")) {
       onDelete(todo.id);
     }
+  }
+
+  function handleEditStart() {
+    setEditValue(todo.title);
+    setIsEditing(true);
+  }
+
+  async function handleEditConfirm() {
+    const trimmed = editValue.trim();
+    if (!trimmed || trimmed === todo.title) {
+      setIsEditing(false);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await onEdit(todo.id, trimmed);
+      setIsEditing(false);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao salvar");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleEditCancel() {
+    setEditValue(todo.title);
+    setIsEditing(false);
   }
 
   return (
@@ -31,9 +64,47 @@ export function TodoItem({ todo, onToggle, onDelete }: TodoItemProps) {
               : `Marcar como concluída: ${todo.title}`
           }
         />
-        <span className="todo-title">{todo.title}</span>
+        {isEditing ? (
+          <input
+            type="text"
+            className="todo-title-edit"
+            value={editValue}
+            disabled={isSaving}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleEditConfirm}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleEditConfirm();
+              }
+              if (e.key === "Escape") {
+                handleEditCancel();
+              }
+            }}
+            aria-label="Editar título da tarefa"
+            autoFocus
+          />
+        ) : (
+          <span
+            className="todo-title"
+            onDoubleClick={handleEditStart}
+          >
+            {todo.title}
+          </span>
+        )}
       </label>
+      {!isEditing && (
+        <button
+          type="button"
+          className="edit-button"
+          onClick={handleEditStart}
+          aria-label={`Editar tarefa: ${todo.title}`}
+        >
+          Editar
+        </button>
+      )}
       <button
+        type="button"
         className="delete-button"
         onClick={handleDelete}
         aria-label={`Remover tarefa: ${todo.title}`}

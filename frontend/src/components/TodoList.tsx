@@ -5,9 +5,10 @@ interface TodoListProps {
   todos: Todo[];
   onToggle: (id: number, completed: boolean) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onEdit: (id: number, title: string) => Promise<void>;
 }
 
-export function TodoList({ todos, onToggle, onDelete }: TodoListProps) {
+export function TodoList({ todos, onToggle, onDelete, onEdit }: TodoListProps) {
   if (todos.length === 0) {
     return <p className="empty-message">Nenhuma tarefa cadastrada</p>;
   }
@@ -20,6 +21,7 @@ export function TodoList({ todos, onToggle, onDelete }: TodoListProps) {
           todo={todo}
           onToggle={onToggle}
           onDelete={onDelete}
+          onEdit={onEdit}
         />
       ))}
     </ul>

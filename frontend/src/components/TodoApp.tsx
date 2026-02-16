@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Todo } from "../types/todo.ts";
-import { fetchTodos, createTodo, updateTodo, deleteTodo } from "../services/api.ts";
+import { fetchTodos, createTodo, updateTodo, updateTodoTitle, deleteTodo } from "../services/api.ts";
 import { TodoForm } from "./TodoForm.tsx";
 import { TodoList } from "./TodoList.tsx";
 import { useAuth } from "../contexts/AuthContext.tsx";
@@ -36,6 +36,13 @@ export function TodoApp() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar tarefa");
     }
+  }
+
+  async function handleEditTodo(id: number, title: string) {
+    await updateTodoTitle(id, title);
+    setTodos((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, title } : t))
+    );
   }
 
   async function handleDelete(id: number) {
@@ -88,7 +95,12 @@ export function TodoApp() {
       </header>
       <main>
         <TodoForm onAdd={handleAdd} />
-        <TodoList todos={todos} onToggle={handleToggle} onDelete={handleDelete} />
+        <TodoList
+          todos={todos}
+          onToggle={handleToggle}
+          onDelete={handleDelete}
+          onEdit={handleEditTodo}
+        />
       </main>
     </div>
   );
