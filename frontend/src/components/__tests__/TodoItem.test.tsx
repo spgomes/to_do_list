@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { TodoItem } from "../TodoItem.tsx";
@@ -307,5 +307,39 @@ describe("TodoItem", () => {
     await vi.waitFor(() => {
       expect(screen.queryByLabelText("Editar título da tarefa")).toBeNull();
     });
+  });
+
+  it("renders with draggable=true", () => {
+    const { container } = render(
+      <TodoItem
+        todo={pendingTodo}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={defaultOnEdit}
+      />
+    );
+
+    const li = container.querySelector("li.todo-item");
+    expect(li).toBeDefined();
+    expect((li as HTMLElement).draggable).toBe(true);
+  });
+
+  it("onDragStart sets todoId in dataTransfer", () => {
+    const setData = vi.fn();
+    const { container } = render(
+      <TodoItem
+        todo={pendingTodo}
+        onToggle={vi.fn()}
+        onDelete={vi.fn()}
+        onEdit={defaultOnEdit}
+      />
+    );
+
+    const li = container.querySelector("li.todo-item") as HTMLElement;
+    fireEvent.dragStart(li, {
+      dataTransfer: { setData, effectAllowed: "move" },
+    });
+
+    expect(setData).toHaveBeenCalledWith("todoId", "1");
   });
 });

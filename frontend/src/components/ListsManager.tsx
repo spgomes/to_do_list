@@ -8,8 +8,6 @@ interface ListsManagerProps {
   onCreateList: (name: string, color: string) => Promise<void>;
   onUpdateList: (id: number, name: string, color: string) => Promise<void>;
   onDeleteList: (id: number) => Promise<void>;
-  error: string | null;
-  onClearError: () => void;
 }
 
 export function ListsManager({
@@ -17,8 +15,6 @@ export function ListsManager({
   onCreateList,
   onUpdateList,
   onDeleteList,
-  error,
-  onClearError,
 }: ListsManagerProps) {
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(PASTEL_COLORS[0].hex);
@@ -28,19 +24,20 @@ export function ListsManager({
   const [editColor, setEditColor] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const name = newName.trim();
     if (!name) return;
     setCreating(true);
-    onClearError();
+    setError(null);
     try {
       await onCreateList(name, newColor);
       setNewName("");
       setNewColor(PASTEL_COLORS[0].hex);
-    } catch {
-      // error is shown via props.error
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar lista");
     } finally {
       setCreating(false);
     }
@@ -50,7 +47,7 @@ export function ListsManager({
     setEditingId(list.id);
     setEditValue(list.name);
     setEditColor(list.color);
-    onClearError();
+    setError(null);
   }
 
   function cancelEdit() {
@@ -64,12 +61,14 @@ export function ListsManager({
     const name = editValue.trim();
     if (!name) return;
     setSaving(true);
-    onClearError();
+    setError(null);
     try {
       await onUpdateList(editingId, name, editColor);
       setEditingId(null);
       setEditValue("");
       setEditColor("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao renomear lista");
     } finally {
       setSaving(false);
     }
@@ -78,9 +77,11 @@ export function ListsManager({
   async function handleDelete(list: List) {
     if (!window.confirm(`Remover a lista "${list.name}"?`)) return;
     setDeletingId(list.id);
-    onClearError();
+    setError(null);
     try {
       await onDeleteList(list.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao remover lista");
     } finally {
       setDeletingId(null);
     }

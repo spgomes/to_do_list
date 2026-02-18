@@ -4,6 +4,7 @@ import type { List } from "../types/list";
 import {
   fetchTodos,
   createTodo,
+  createTodoInList,
   updateTodo,
   updateTodoTitle,
   deleteTodo,
@@ -24,8 +25,6 @@ export function TodoApp() {
   const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [listErrorTodoId, setListErrorTodoId] = useState<number | null>(null);
   const [showListsManager, setShowListsManager] = useState(false);
   const { logout } = useAuth();
 
@@ -60,9 +59,7 @@ export function TodoApp() {
       todos: todos.filter((t) => t.lists?.some((l) => l.id === list.id)),
     }));
     const unlisted = todos.filter((t) => !t.lists?.length);
-    if (unlisted.length > 0) {
-      result.push({ list: null, todos: unlisted });
-    }
+    result.push({ list: null, todos: unlisted });
     return result;
   }, [lists, todos]);
 
@@ -102,76 +99,71 @@ export function TodoApp() {
     }
   }
 
-  async function handleAddList(todoId: number, listId: number) {
-    setListErrorTodoId(todoId);
-    setListError(null);
-    try {
-      await addListToTodo(todoId, listId);
-      const updated = await fetchTodos();
-      setTodos(updated);
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : "Erro ao adicionar lista");
-    }
-  }
-
-  async function handleRemoveList(todoId: number, listId: number) {
-    setListError(null);
-    try {
-      await removeListFromTodo(todoId, listId);
-      const updated = await fetchTodos();
-      setTodos(updated);
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : "Erro ao remover lista");
-      setListErrorTodoId(todoId);
-    }
-  }
-
   async function handleCreateList(name: string, color: string) {
-    setListError(null);
-    try {
-      const created = await createList(name, color);
-      setLists((prev) => [created, ...prev]);
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : "Erro ao criar lista");
-      throw err;
-    }
+    const created = await createList(name, color);
+    setLists((prev) => [created, ...prev]);
   }
 
   async function handleUpdateList(id: number, name: string, color: string) {
-    setListError(null);
-    try {
-      await updateList(id, name, color);
-      setLists((prev) =>
-        prev.map((l) => (l.id === id ? { ...l, name, color } : l))
-      );
-      setTodos((prev) =>
-        prev.map((t) => ({
-          ...t,
-          lists: (t.lists ?? []).map((list) =>
-            list.id === id ? { ...list, name, color } : list
-          ),
-        }))
-      );
-    } catch (err) {
-      setListError(err instanceof Error ? err.message : "Erro ao renomear lista");
-      throw err;
-    }
+    await updateList(id, name, color);
+    setLists((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, name, color } : l))
+    );
+    setTodos((prev) =>
+      prev.map((t) => ({
+        ...t,
+        lists: (t.lists ?? []).map((list) =>
+          list.id === id ? { ...list, name, color } : list
+        ),
+      }))
+    );
   }
 
   async function handleDeleteList(id: number) {
-    setListError(null);
+    await deleteList(id);
+    setLists((prev) => prev.filter((l) => l.id !== id));
+    setTodos((prev) =>
+      prev.map((t) => ({
+        ...t,
+        lists: (t.lists ?? []).filter((list) => list.id !== id),
+      }))
+    );
+  }
+
+  async function handleCreateTodoInCard(list: List | null, title: string): Promise<void> {
+    if (list === null) {
+      const newTodo = await createTodo(title);
+      setTodos((prev) => [newTodo, ...prev]);
+    } else {
+      const newTodo = await createTodoInList(list.id, title);
+      setTodos((prev) => [newTodo, ...prev]);
+    }
+  }
+
+  async function handleDropTodo(todoId: number, targetList: List | null): Promise<void> {
+    const todo = todos.find((t) => t.id === todoId);
+    if (!todo) return;
+    const currentList = todo.lists?.[0] ?? null;
+    const currentListId = currentList?.id;
+    const targetListId = targetList?.id ?? null;
+    if (targetListId === currentListId) return;
+
+    const previousTodos = todos;
+    setTodos((prev) =>
+      prev.map((t) =>
+        t.id === todoId ? { ...t, lists: targetList ? [targetList] : [] } : t
+      )
+    );
     try {
-      await deleteList(id);
-      setLists((prev) => prev.filter((l) => l.id !== id));
-      setTodos((prev) =>
-        prev.map((t) => ({
-          ...t,
-          lists: (t.lists ?? []).filter((list) => list.id !== id),
-        }))
-      );
+      if (currentList) {
+        await removeListFromTodo(todoId, currentList.id);
+      }
+      if (targetList) {
+        await addListToTodo(todoId, targetList.id);
+      }
     } catch (err) {
-      setListError(err instanceof Error ? err.message : "Erro ao remover lista");
-      throw err;
+      setTodos(previousTodos);
+      setError(err instanceof Error ? err.message : "Erro ao mover tarefa");
     }
   }
 
@@ -232,8 +224,6 @@ export function TodoApp() {
               onCreateList={handleCreateList}
               onUpdateList={handleUpdateList}
               onDeleteList={handleDeleteList}
-              error={listError}
-              onClearError={() => setListError(null)}
             />
           </div>
         )}
@@ -243,14 +233,11 @@ export function TodoApp() {
               key={list?.id ?? "unlisted"}
               list={list}
               todos={listTodos}
-              allLists={lists}
               onToggle={handleToggle}
               onDelete={handleDelete}
               onEdit={handleEditTodo}
-              onAddList={handleAddList}
-              onRemoveList={handleRemoveList}
-              listError={listError ?? undefined}
-              listErrorTodoId={listErrorTodoId}
+              onCreateTodo={(title) => handleCreateTodoInCard(list, title)}
+              onDropTodo={handleDropTodo}
             />
           ))}
         </div>

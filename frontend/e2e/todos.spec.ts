@@ -239,7 +239,7 @@ test.describe("Todo CRUD (authenticated)", () => {
   test("shows empty message when no todos exist", async ({ page }) => {
     await authenticateInBrowser(page, token);
 
-    await expect(page.getByText("Nenhuma tarefa cadastrada")).toBeVisible();
+    await expect(page.getByText("Nenhuma tarefa")).toBeVisible();
   });
 
   test("adds a todo via button click and it appears in the list", async ({
@@ -247,20 +247,21 @@ test.describe("Todo CRUD (authenticated)", () => {
   }) => {
     await authenticateInBrowser(page, token);
 
-    await page.getByPlaceholder("Nova tarefa...").fill("Comprar leite");
-    await page.getByRole("button", { name: "Adicionar" }).click();
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    await globalForm.getByPlaceholder("Nova tarefa...").fill("Comprar leite");
+    await globalForm.getByRole("button", { name: "Adicionar" }).click();
 
     await expect(page.getByText("Comprar leite")).toBeVisible();
-    await expect(
-      page.getByText("Nenhuma tarefa cadastrada")
-    ).not.toBeVisible();
+    await expect(page.getByText("Nenhuma tarefa")).not.toBeVisible();
   });
 
   test("adds a todo via Enter key", async ({ page }) => {
     await authenticateInBrowser(page, token);
 
-    await page.getByPlaceholder("Nova tarefa...").fill("Estudar Go");
-    await page.getByPlaceholder("Nova tarefa...").press("Enter");
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    const input = globalForm.getByPlaceholder("Nova tarefa...");
+    await input.fill("Estudar Go");
+    await input.press("Enter");
 
     await expect(page.getByText("Estudar Go")).toBeVisible();
   });
@@ -268,9 +269,10 @@ test.describe("Todo CRUD (authenticated)", () => {
   test("clears the input field after adding a todo", async ({ page }) => {
     await authenticateInBrowser(page, token);
 
-    const input = page.getByPlaceholder("Nova tarefa...");
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    const input = globalForm.getByPlaceholder("Nova tarefa...");
     await input.fill("Tarefa temporária");
-    await page.getByRole("button", { name: "Adicionar" }).click();
+    await globalForm.getByRole("button", { name: "Adicionar" }).click();
 
     await expect(input).toHaveValue("");
   });
@@ -280,7 +282,8 @@ test.describe("Todo CRUD (authenticated)", () => {
   }) => {
     await authenticateInBrowser(page, token);
 
-    await page.getByRole("button", { name: "Adicionar" }).click();
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    await globalForm.getByRole("button", { name: "Adicionar" }).click();
 
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(
@@ -367,7 +370,7 @@ test.describe("Todo CRUD (authenticated)", () => {
       .click();
 
     await expect(page.getByText("Tarefa para remover")).not.toBeVisible();
-    await expect(page.getByText("Nenhuma tarefa cadastrada")).toBeVisible();
+    await expect(page.getByText("Nenhuma tarefa")).toBeVisible();
   });
 
   test("does not remove a todo when dialog is dismissed", async ({
@@ -401,9 +404,9 @@ test.describe("Todo CRUD (authenticated)", () => {
     await expect(page).toHaveURL("/");
     await expect(page.getByText("To-Do List")).toBeVisible();
 
-    // Create a todo
-    await page.getByPlaceholder("Nova tarefa...").fill("Tarefa após login");
-    await page.getByRole("button", { name: "Adicionar" }).click();
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    await globalForm.getByPlaceholder("Nova tarefa...").fill("Tarefa após login");
+    await globalForm.getByRole("button", { name: "Adicionar" }).click();
 
     await expect(page.getByText("Tarefa após login")).toBeVisible();
   });
@@ -434,8 +437,9 @@ test.describe("Full CRUD flow (authenticated)", () => {
     const token = await registerViaAPI(request, email, TEST_PASSWORD);
     await authenticateInBrowser(page, token);
 
-    const input = page.getByPlaceholder("Nova tarefa...");
-    const addButton = page.getByRole("button", { name: "Adicionar" });
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    const input = globalForm.getByPlaceholder("Nova tarefa...");
+    const addButton = globalForm.getByRole("button", { name: "Adicionar" });
 
     await input.fill("Tarefa A");
     await addButton.click();

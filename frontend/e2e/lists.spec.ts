@@ -92,11 +92,10 @@ test.describe("Listas Temáticas E2E", () => {
 
     await authenticateInBrowser(page, token);
 
-    await expect(page.getByText("Revisar relatório")).toBeVisible();
-    const todoRow = page
-      .locator("li.todo-item")
-      .filter({ hasText: "Revisar relatório" });
-    await expect(todoRow.getByText("urgente")).toBeVisible();
+    const cardUrgente = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "urgente" }) });
+    await expect(cardUrgente.getByText("Revisar relatório")).toBeVisible();
   });
 
   test("5.4 - remover lista de uma tarefa e validar remoção", async ({
@@ -117,23 +116,28 @@ test.describe("Listas Temáticas E2E", () => {
       data: { name: "remover-depois", color: "#BBDEFB" },
     });
     const list = (await listResp.json()) as { id: number };
-
     await request.post(`${API_URL}/todos/${todo.id}/lists/${list.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
     await authenticateInBrowser(page, token);
 
-    const todoRow = page
-      .locator("li.todo-item")
-      .filter({ hasText: "Tarefa com lista" });
-    await expect(todoRow.getByText("remover-depois")).toBeVisible();
+    const cardRemoverDepois = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "remover-depois" }) });
+    await expect(cardRemoverDepois.getByText("Tarefa com lista")).toBeVisible();
 
-    await todoRow
-      .getByRole("button", { name: /Remover lista remover-depois/i })
-      .click();
+    const cardSemLista = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Sem lista" }) });
+    await cardSemLista.scrollIntoViewIfNeeded();
+    const todoItem = page.getByTestId("todo-item").filter({ hasText: "Tarefa com lista" });
+    await todoItem.dragTo(cardSemLista);
 
-    await expect(todoRow.getByText("remover-depois")).not.toBeVisible();
+    await expect(cardRemoverDepois.getByText("Tarefa com lista")).not.toBeVisible();
+    await expect(cardSemLista.getByText("Tarefa com lista")).toBeVisible({
+      timeout: 10000,
+    });
   });
 
   test("5.5 - editar lista (nome e cor) e validar alterações", async ({
@@ -209,21 +213,20 @@ test.describe("Listas Temáticas E2E", () => {
 
     await authenticateInBrowser(page, token);
 
-    const todoRow = page
-      .locator("li.todo-item")
-      .filter({ hasText: "Tarefa com lista para deletar" });
-    await expect(todoRow.getByText("lista-para-deletar")).toBeVisible();
+    const cardParaDeletar = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "lista-para-deletar" }) });
+    await expect(cardParaDeletar.getByText("Tarefa com lista para deletar")).toBeVisible();
 
     await page.getByRole("button", { name: /Gerenciar listas/i }).click();
-    page.on("dialog", async (dialog) => {
-      await dialog.accept();
-    });
+    page.on("dialog", (dialog) => dialog.accept());
     await page
       .getByRole("list", { name: /Lista de listas temáticas/i })
       .getByRole("button", { name: /Remover lista lista-para-deletar/i })
       .click();
 
-    await expect(page.locator("text=lista-para-deletar")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "lista-para-deletar" })).not.toBeVisible();
+    await expect(page.getByText("Tarefa com lista para deletar")).toBeVisible();
   });
 
   test("5.7 - tentar criar lista duplicada exibe feedback de erro", async ({
@@ -251,146 +254,6 @@ test.describe("Listas Temáticas E2E", () => {
     ).toBeVisible();
   });
 
-  test("6.11 - selecionar lista e ver apenas tarefas da lista", async ({
-    page,
-    request,
-  }) => {
-    const todoAResp = await request.post(`${API_URL}/todos`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { title: "Tarefa na lista A" },
-    });
-    const todoA = (await todoAResp.json()) as { id: number };
-
-    const todoBResp = await request.post(`${API_URL}/todos`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { title: "Tarefa na lista B" },
-    });
-    const todoB = (await todoBResp.json()) as { id: number };
-
-    const listAResp = await request.post(`${API_URL}/lists`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      data: { name: "Lista A", color: "#F8BBD9" },
-    });
-    const listA = (await listAResp.json()) as { id: number };
-
-    const listBResp = await request.post(`${API_URL}/lists`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      data: { name: "Lista B", color: "#BBDEFB" },
-    });
-    const listB = (await listBResp.json()) as { id: number };
-
-    await request.post(`${API_URL}/todos/${todoA.id}/lists/${listA.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    await request.post(`${API_URL}/todos/${todoB.id}/lists/${listB.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    const listATodosResp = await request.get(
-      `${API_URL}/todos?list_id=${listA.id}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    expect(listATodosResp.ok()).toBeTruthy();
-    const listATodos = (await listATodosResp.json()) as {
-      id: number;
-      title: string;
-    }[];
-    expect(listATodos.some((t) => t.title === "Tarefa na lista A")).toBeTruthy();
-
-    await authenticateInBrowser(page, token);
-
-    await expect(page.getByText("Tarefa na lista A")).toBeVisible();
-    await expect(page.getByText("Tarefa na lista B")).toBeVisible();
-
-    const filterSelect = page.getByRole("combobox", {
-      name: /Selecionar lista para filtrar tarefas/i,
-    });
-    const todosResponse = page.waitForResponse(
-      (resp) =>
-        resp.url().includes("/api/todos") &&
-        resp.url().includes("list_id=") &&
-        resp.status() === 200
-    );
-    await filterSelect.selectOption({ value: String(listA.id) });
-    await todosResponse;
-
-    await expect(
-      page.locator(".todo-list").getByText("Tarefa na lista A")
-    ).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText("Tarefa na lista B")).not.toBeVisible();
-
-    await filterSelect.selectOption({ value: String(listB.id) });
-
-    await expect(page.getByText("Tarefa na lista A")).not.toBeVisible();
-    await expect(page.getByText("Tarefa na lista B")).toBeVisible({
-      timeout: 10000,
-    });
-
-    await filterSelect.selectOption({ value: "all" });
-
-    await expect(page.getByText("Tarefa na lista A")).toBeVisible();
-    await expect(page.getByText("Tarefa na lista B")).toBeVisible();
-  });
-
-  test("6.11b - adicionar tarefa à lista e ver atualização ao filtrar", async ({
-    page,
-    request,
-  }) => {
-    const listResp = await request.post(`${API_URL}/lists`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      data: { name: "Lista para adicionar", color: "#B2DFDB" },
-    });
-    const list = (await listResp.json()) as { id: number };
-
-    await request.post(`${API_URL}/todos`, {
-      headers: { Authorization: `Bearer ${token}` },
-      data: { title: "Tarefa sem lista" },
-    });
-
-    await authenticateInBrowser(page, token);
-
-    const filterSelect = page.getByRole("combobox", {
-      name: /Selecionar lista para filtrar tarefas/i,
-    });
-    const emptyListResponse = page.waitForResponse(
-      (resp) =>
-        resp.url().includes("/api/todos") &&
-        resp.url().includes("list_id=") &&
-        resp.status() === 200
-    );
-    await filterSelect.selectOption({ value: String(list.id) });
-    await emptyListResponse;
-
-    await expect(
-      page.locator(".empty-message").getByText(/Nenhuma tarefa cadastrada/i)
-    ).toBeVisible({ timeout: 15000 });
-
-    await filterSelect.selectOption({ value: "all" });
-    await expect(page.getByText("Tarefa sem lista")).toBeVisible();
-
-    const todoRow = page
-      .locator("li.todo-item")
-      .filter({ hasText: "Tarefa sem lista" });
-    await todoRow.getByRole("button", { name: /Adicionar lista/i }).click();
-    await page
-      .getByRole("listbox", { name: /Listas disponíveis/i })
-      .getByRole("option", { name: /Lista para adicionar/i })
-      .click();
-
-    await filterSelect.selectOption({ value: String(list.id) });
-    await page.waitForLoadState("networkidle");
-    await expect(page.getByText("Tarefa sem lista")).toBeVisible();
-  });
-
   test("5.8 - botão Criar desabilitado quando nome está vazio", async ({
     page,
   }) => {
@@ -406,5 +269,104 @@ test.describe("Listas Temáticas E2E", () => {
 
     await page.getByLabel(/Nome da nova lista/i).fill("valido");
     await expect(createButton).toBeEnabled();
+  });
+});
+
+// ─── Novo fluxo de listas (Tarefa 4.0) ─────────────────────────
+
+test.describe("Novo fluxo de listas - cards e formulário inline", () => {
+  let token: string;
+
+  test.beforeEach(async ({ request }) => {
+    token = await registerViaAPI(request, uniqueEmail(), TEST_PASSWORD);
+  });
+
+  test("4.2 - criar lista com cor (Trabalho, azul) e ver card na tela", async ({
+    page,
+  }) => {
+    await authenticateInBrowser(page, token);
+
+    await page.getByRole("button", { name: /Gerenciar listas/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /Gerenciar listas/i })
+    ).toBeVisible();
+
+    await page.getByLabel(/Nome da nova lista/i).fill("Trabalho");
+    await page.getByRole("button", { name: /Cor Azul/i }).click();
+    await page.getByRole("button", { name: /Criar lista/i }).click();
+
+    const cardTrabalho = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Trabalho" }) });
+    await expect(cardTrabalho).toBeVisible();
+  });
+
+  test("4.3 - criar tarefa avulsa no TodoForm global e ver no card Sem lista", async ({
+    page,
+  }) => {
+    await authenticateInBrowser(page, token);
+
+    const globalForm = page.getByRole("form", { name: /Adicionar nova tarefa/i });
+    await globalForm.getByPlaceholder("Nova tarefa...").fill("Tarefa avulsa");
+    await globalForm.getByRole("button", { name: "Adicionar" }).click();
+
+    const cardSemLista = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Sem lista" }) });
+    await expect(cardSemLista).toBeVisible();
+    await expect(cardSemLista.getByText("Tarefa avulsa")).toBeVisible();
+  });
+
+  test("4.4 - criar tarefa dentro do card Trabalho e ver só nesse card", async ({
+    page,
+  }) => {
+    await authenticateInBrowser(page, token);
+
+    await page.getByRole("button", { name: /Gerenciar listas/i }).click();
+    await page.getByLabel(/Nome da nova lista/i).fill("Trabalho");
+    await page.getByRole("button", { name: /Cor Azul/i }).click();
+    await page.getByRole("button", { name: /Criar lista/i }).click();
+
+    const cardTrabalho = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Trabalho" }) });
+    await expect(cardTrabalho).toBeVisible();
+
+    const formTrabalho = cardTrabalho.getByTestId("list-card-add-form");
+    await formTrabalho.getByPlaceholder("Nova tarefa...").fill("Tarefa do trabalho");
+    await formTrabalho.getByRole("button", { name: "Adicionar" }).click();
+
+    await expect(cardTrabalho.getByText("Tarefa do trabalho")).toBeVisible();
+
+    const cardSemLista = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Sem lista" }) });
+    await expect(cardSemLista.getByText("Tarefa do trabalho")).not.toBeVisible();
+  });
+
+  test("4.8 - persistência após reload (lista e tarefas no card correto)", async ({
+    page,
+  }) => {
+    await authenticateInBrowser(page, token);
+
+    await page.getByRole("button", { name: /Gerenciar listas/i }).click();
+    await page.getByLabel(/Nome da nova lista/i).fill("Trabalho");
+    await page.getByRole("button", { name: /Criar lista/i }).click();
+
+    const cardTrabalho = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Trabalho" }) });
+    const formTrabalho = cardTrabalho.getByTestId("list-card-add-form");
+    await formTrabalho.getByPlaceholder("Nova tarefa...").fill("Tarefa persistente");
+    await formTrabalho.getByRole("button", { name: "Adicionar" }).click();
+
+    await expect(cardTrabalho.getByText("Tarefa persistente")).toBeVisible();
+
+    await page.reload();
+
+    const cardTrabalhoAfter = page
+      .getByTestId("list-card")
+      .filter({ has: page.getByRole("heading", { name: "Trabalho" }) });
+    await expect(cardTrabalhoAfter.getByText("Tarefa persistente")).toBeVisible();
   });
 });
