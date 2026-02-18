@@ -18,6 +18,7 @@ export function TodoItem({
   const [editValue, setEditValue] = useState(todo.title);
   const [isSaving, setIsSaving] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
 
   function handleDragStart(e: React.DragEvent) {
     e.dataTransfer.setData("todoId", String(todo.id));
@@ -35,7 +36,10 @@ export function TodoItem({
 
   function handleDelete() {
     if (window.confirm("Tem certeza que deseja remover esta tarefa?")) {
-      onDelete(todo.id);
+      setIsRemoving(true);
+      setTimeout(() => {
+        onDelete(todo.id);
+      }, 200);
     }
   }
 
@@ -68,7 +72,7 @@ export function TodoItem({
 
   return (
     <li
-      className={`todo-item ${todo.completed ? "completed" : ""} ${isDragging ? "dragging" : ""}`}
+      className={`todo-item ${todo.completed ? "completed" : ""} ${isDragging ? "dragging" : ""} ${isRemoving ? "removing" : ""}`}
       data-testid="todo-item"
       draggable={true}
       onDragStart={handleDragStart}

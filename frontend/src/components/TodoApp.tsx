@@ -171,7 +171,7 @@ export function TodoApp() {
     return (
       <div className="app">
         <div className="loading-container" role="status" aria-label="Carregando tarefas">
-          <div className="loading-spinner" aria-hidden="true"></div>
+          <span className="loading-spinner" aria-hidden="true">✏️</span>
           <p className="loading-text">Carregando tarefas...</p>
         </div>
       </div>

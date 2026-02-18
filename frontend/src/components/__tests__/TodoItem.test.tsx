@@ -97,7 +97,9 @@ describe("TodoItem", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /remover/i }));
-    expect(onDelete).toHaveBeenCalledWith(1);
+    await vi.waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith(1);
+    }, { timeout: 500 });
   });
 
   it("has correct aria-label for pending todo checkbox", () => {
