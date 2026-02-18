@@ -1,17 +1,17 @@
 import { useState } from "react";
 import type { Todo } from "../types/todo";
-import type { Tag } from "../types/tag";
-import { TagSelector } from "./TagSelector";
+import type { List } from "../types/list";
+import { ListSelector } from "./ListSelector";
 
 interface TodoItemProps {
   todo: Todo;
   onToggle: (id: number, completed: boolean) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onEdit: (id: number, title: string) => Promise<void>;
-  allTags?: Tag[];
-  onAddTag?: (todoId: number, tagId: number) => Promise<void>;
-  onRemoveTag?: (todoId: number, tagId: number) => Promise<void>;
-  tagError?: string;
+  allLists?: List[];
+  onAddList?: (todoId: number, listId: number) => Promise<void>;
+  onRemoveList?: (todoId: number, listId: number) => Promise<void>;
+  listError?: string;
 }
 
 export function TodoItem({
@@ -19,10 +19,10 @@ export function TodoItem({
   onToggle,
   onDelete,
   onEdit,
-  allTags = [],
-  onAddTag,
-  onRemoveTag,
-  tagError,
+  allLists = [],
+  onAddList,
+  onRemoveList,
+  listError,
 }: TodoItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(todo.title);
@@ -126,16 +126,16 @@ export function TodoItem({
       >
         Remover
       </button>
-      {allTags.length > 0 && onAddTag && onRemoveTag && (
+      {allLists.length > 0 && onAddList && onRemoveList && (
         <div className="todo-item-tags">
-          <TagSelector
+          <ListSelector
             todoId={todo.id}
-            currentTags={todo.tags ?? []}
-            allTags={allTags}
-            onAdd={onAddTag}
-            onRemove={onRemoveTag}
+            currentLists={todo.lists ?? []}
+            allLists={allLists}
+            onAdd={onAddList}
+            onRemove={onRemoveList}
             disabled={isEditing}
-            addTagError={tagError}
+            addListError={listError}
           />
         </div>
       )}

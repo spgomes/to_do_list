@@ -1,37 +1,37 @@
 import { useState, useRef, useEffect } from "react";
-import type { Tag } from "../types/tag";
-import { TagChip } from "./TagChip";
+import type { List } from "../types/list";
+import { ListChip } from "./ListChip";
 
-interface TagSelectorProps {
+interface ListSelectorProps {
   todoId: number;
-  currentTags: Tag[];
-  allTags: Tag[];
-  onAdd: (todoId: number, tagId: number) => Promise<void>;
-  onRemove: (todoId: number, tagId: number) => Promise<void>;
+  currentLists: List[];
+  allLists: List[];
+  onAdd: (todoId: number, listId: number) => Promise<void>;
+  onRemove: (todoId: number, listId: number) => Promise<void>;
   disabled?: boolean;
-  addTagError?: string;
+  addListError?: string;
 }
 
-export function TagSelector({
+export function ListSelector({
   todoId,
-  currentTags,
-  allTags,
+  currentLists,
+  allLists,
   onAdd,
   onRemove,
   disabled,
-  addTagError,
-}: TagSelectorProps) {
+  addListError,
+}: ListSelectorProps) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const currentIds = new Set(currentTags.map((t) => t.id));
-  const availableTags = allTags.filter((t) => !currentIds.has(t.id));
+  const currentIds = new Set(currentLists.map((l) => l.id));
+  const availableLists = allLists.filter((l) => !currentIds.has(l.id));
 
   useEffect(() => {
-    setError(addTagError ?? null);
-  }, [addTagError]);
+    setError(addListError ?? null);
+  }, [addListError]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -46,40 +46,40 @@ export function TagSelector({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  async function handleAdd(tagId: number) {
+  async function handleAdd(listId: number) {
     setAdding(true);
     setError(null);
     try {
-      await onAdd(todoId, tagId);
+      await onAdd(todoId, listId);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao adicionar tag");
+      setError(err instanceof Error ? err.message : "Erro ao adicionar lista");
     } finally {
       setAdding(false);
     }
   }
 
-  async function handleRemove(tagId: number) {
+  async function handleRemove(listId: number) {
     setError(null);
     try {
-      await onRemove(todoId, tagId);
+      await onRemove(todoId, listId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao remover tag");
+      setError(err instanceof Error ? err.message : "Erro ao remover lista");
     }
   }
 
   return (
     <div className="tag-selector" ref={dropdownRef}>
-      <div className="tag-selector-chips" role="list" aria-label="Tags da tarefa">
-        {currentTags.map((tag) => (
-          <TagChip
-            key={tag.id}
-            tag={tag}
-            onRemove={disabled ? undefined : () => handleRemove(tag.id)}
+      <div className="tag-selector-chips" role="list" aria-label="Listas da tarefa">
+        {currentLists.map((list) => (
+          <ListChip
+            key={list.id}
+            list={list}
+            onRemove={disabled ? undefined : () => handleRemove(list.id)}
           />
         ))}
       </div>
-      {!disabled && availableTags.length > 0 && (
+      {!disabled && availableLists.length > 0 && (
         <div className="tag-selector-dropdown">
           <button
             type="button"
@@ -87,26 +87,26 @@ export function TagSelector({
             onClick={() => setOpen((o) => !o)}
             aria-expanded={open}
             aria-haspopup="listbox"
-            aria-label="Adicionar tag à tarefa"
+            aria-label="Adicionar lista à tarefa"
           >
-            + Tag
+            + Lista
           </button>
           {open && (
             <ul
               className="tag-selector-menu"
               role="listbox"
-              aria-label="Tags disponíveis"
+              aria-label="Listas disponíveis"
             >
-              {availableTags.map((tag) => (
-                <li key={tag.id} role="option">
+              {availableLists.map((list) => (
+                <li key={list.id} role="option">
                   <button
                     type="button"
                     className="tag-selector-option"
-                    onClick={() => handleAdd(tag.id)}
+                    onClick={() => handleAdd(list.id)}
                     disabled={adding}
-                    aria-label={`Adicionar tag ${tag.name}`}
+                    aria-label={`Adicionar lista ${list.name}`}
                   >
-                    {tag.name}
+                    {list.name}
                   </button>
                 </li>
               ))}
@@ -114,9 +114,9 @@ export function TagSelector({
           )}
         </div>
       )}
-      {(error || addTagError) && (
+      {(error || addListError) && (
         <p className="tag-selector-error" role="alert">
-          {error || addTagError}
+          {error || addListError}
         </p>
       )}
     </div>

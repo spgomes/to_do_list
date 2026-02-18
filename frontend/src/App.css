@@ -1,7 +1,7 @@
 /* ===== App Layout ===== */
 
 .app {
-  max-width: 600px;
+  max-width: 900px;
   width: 100%;
   margin: 0 auto;
   padding: var(--spacing-xl) var(--spacing-lg);
@@ -176,6 +176,7 @@
 
 .todo-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-md);
@@ -198,6 +199,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   flex: 1;
+  min-width: 0;
   cursor: pointer;
   min-height: 28px;
 }
@@ -326,13 +328,15 @@
 /* ===== TodoItem tags ===== */
 
 .todo-item-tags {
+  flex-basis: 100%;
   width: 100%;
   margin-top: var(--spacing-sm);
   padding-top: var(--spacing-sm);
   border-top: 1px solid var(--color-border);
+  order: 10;
 }
 
-/* ===== TagChip ===== */
+/* ===== ListChip (chips coloridos com contraste WCAG AA) ===== */
 
 .tag-chip {
   display: inline-flex;
@@ -340,7 +344,7 @@
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   background-color: var(--color-primary-bg, #e8f4fd);
-  color: var(--color-primary);
+  color: var(--color-text);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -355,7 +359,7 @@
 
 .tag-chip-remove {
   padding: 0 var(--spacing-xs);
-  color: var(--color-primary);
+  color: var(--color-text);
   font-size: 1.1rem;
   line-height: 1;
   min-width: 24px;
@@ -365,8 +369,8 @@
 }
 
 .tag-chip-remove:hover {
-  background-color: var(--color-primary);
-  color: #fff;
+  background-color: rgba(0, 0, 0, 0.15);
+  color: var(--color-text);
 }
 
 .tag-chip-remove:focus-visible {
@@ -454,6 +458,50 @@
   color: var(--color-error-text);
 }
 
+/* ===== ColorPicker ===== */
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.color-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--spacing-sm);
+}
+
+.color-picker-option {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.color-picker-option:hover:not(:disabled) {
+  transform: scale(1.1);
+}
+
+.color-picker-option.selected {
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+
+.color-picker-option:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.color-picker-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* ===== TagsManager ===== */
 
 .visually-hidden {
@@ -468,7 +516,89 @@
   border: 0;
 }
 
-.tags-manager-toggle {
+/* ===== List Filter ===== */
+
+.list-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-lg);
+  margin-bottom: var(--spacing-sm);
+}
+
+.list-filter-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.list-filter-select {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  background-color: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 160px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.list-filter-select:hover {
+  border-color: var(--color-primary);
+}
+
+.list-filter-select:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  outline: none;
+}
+
+/* ===== List Cards (listas como containers) ===== */
+
+.list-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-lg);
+  margin-top: var(--spacing-xl);
+}
+
+.list-card {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  border-left: 4px solid var(--color-border);
+}
+
+.list-card-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  padding: var(--spacing-md) var(--spacing-lg);
+  margin: 0;
+  border-bottom: 2px solid transparent;
+}
+
+.list-card-empty {
+  padding: var(--spacing-lg);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.list-card-tasks {
+  padding: var(--spacing-md);
+  margin: 0;
+  gap: var(--spacing-sm);
+}
+
+.list-card-tasks .todo-item {
+  margin-bottom: 0;
+}
+
+.lists-manager-toggle {
   margin-top: var(--spacing-md);
   padding: var(--spacing-sm) var(--spacing-md);
   font-size: var(--font-size-sm);
@@ -480,17 +610,17 @@
   transition: border-color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.tags-manager-toggle:hover {
+.lists-manager-toggle:hover {
   border-color: var(--color-primary);
   background-color: var(--color-primary-bg, #e8f4fd);
 }
 
-.tags-manager-toggle:focus-visible {
+.lists-manager-toggle:focus-visible {
   box-shadow: 0 0 0 3px var(--color-focus-ring);
   outline: none;
 }
 
-.tags-manager {
+.lists-manager {
   margin-top: var(--spacing-lg);
   padding: var(--spacing-lg);
   background-color: var(--color-surface);
@@ -498,14 +628,14 @@
   box-shadow: var(--shadow-sm);
 }
 
-.tags-manager-title {
+.lists-manager-title {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   margin-bottom: var(--spacing-md);
 }
 
-.tags-manager-error {
+.lists-manager-error {
   padding: var(--spacing-sm) var(--spacing-md);
   background-color: var(--color-error-bg);
   color: var(--color-error-text);
@@ -514,13 +644,20 @@
   margin-bottom: var(--spacing-md);
 }
 
-.tags-manager-form {
+.lists-manager-form {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: var(--spacing-sm);
   margin-bottom: var(--spacing-lg);
 }
 
-.tags-manager-input {
+.lists-manager-color-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+.lists-manager-input {
   flex: 1;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 2px solid var(--color-border);
@@ -531,12 +668,12 @@
   transition: border-color var(--transition-fast);
 }
 
-.tags-manager-input:focus-visible {
+.lists-manager-input:focus-visible {
   border-color: var(--color-primary);
   outline: none;
 }
 
-.tags-manager-create-btn {
+.lists-manager-create-btn {
   padding: var(--spacing-sm) var(--spacing-lg);
   background-color: var(--color-primary);
   color: #fff;
@@ -546,22 +683,22 @@
   transition: background-color var(--transition-fast);
 }
 
-.tags-manager-create-btn:hover:not(:disabled) {
+.lists-manager-create-btn:hover:not(:disabled) {
   background-color: var(--color-primary-hover);
 }
 
-.tags-manager-create-btn:disabled {
+.lists-manager-create-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
 }
 
-.tags-manager-list {
+.lists-manager-list {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
 }
 
-.tags-manager-item {
+.lists-manager-item {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
@@ -570,13 +707,13 @@
   border-radius: var(--radius-md);
 }
 
-.tags-manager-tag-name {
+.lists-manager-list-name {
   flex: 1;
   font-size: var(--font-size-base);
   color: var(--color-text);
 }
 
-.tags-manager-edit-input {
+.lists-manager-edit-input {
   flex: 1;
   padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--color-border);
@@ -586,15 +723,15 @@
   background: var(--color-surface);
 }
 
-.tags-manager-edit-input:focus {
+.lists-manager-edit-input:focus {
   border-color: var(--color-primary);
   outline: none;
 }
 
-.tags-manager-edit-btn,
-.tags-manager-save-btn,
-.tags-manager-cancel-btn,
-.tags-manager-delete-btn {
+.lists-manager-edit-btn,
+.lists-manager-save-btn,
+.lists-manager-cancel-btn,
+.lists-manager-delete-btn {
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-sm);
   border-radius: var(--radius-sm);
@@ -602,45 +739,45 @@
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.tags-manager-edit-btn {
+.lists-manager-edit-btn {
   color: var(--color-primary);
 }
 
-.tags-manager-edit-btn:hover {
+.lists-manager-edit-btn:hover {
   background-color: var(--color-primary-bg, #e8f4fd);
 }
 
-.tags-manager-save-btn {
+.lists-manager-save-btn {
   color: var(--color-primary);
   font-weight: var(--font-weight-medium);
 }
 
-.tags-manager-save-btn:hover:not(:disabled) {
+.lists-manager-save-btn:hover:not(:disabled) {
   background-color: var(--color-primary-bg, #e8f4fd);
 }
 
-.tags-manager-cancel-btn {
+.lists-manager-cancel-btn {
   color: var(--color-text-secondary);
 }
 
-.tags-manager-cancel-btn:hover {
+.lists-manager-cancel-btn:hover {
   background-color: var(--color-border);
 }
 
-.tags-manager-delete-btn {
+.lists-manager-delete-btn {
   color: var(--color-danger);
 }
 
-.tags-manager-delete-btn:hover:not(:disabled) {
+.lists-manager-delete-btn:hover:not(:disabled) {
   background-color: var(--color-error-bg);
 }
 
-.tags-manager-delete-btn:disabled {
+.lists-manager-delete-btn:disabled {
   opacity: 0.7;
   cursor: not-allowed;
 }
 
-.tags-manager-empty {
+.lists-manager-empty {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   padding: var(--spacing-md) 0;

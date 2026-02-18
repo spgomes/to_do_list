@@ -1,4 +1,4 @@
-import type { Tag } from "../types/tag";
+import type { List } from "../types/list";
 import type { Todo } from "../types/todo";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080/api";
@@ -83,55 +83,75 @@ export async function deleteTodo(id: number): Promise<void> {
   return handleVoidResponse(response);
 }
 
-// --- Tags ---
+// --- Lists ---
 
-export async function fetchTags(): Promise<Tag[]> {
-  const response = await fetch(`${API_BASE_URL}/tags`, {
+export async function fetchLists(): Promise<List[]> {
+  const response = await fetch(`${API_BASE_URL}/lists`, {
     headers: authHeaders(),
   });
-  return handleResponse<Tag[]>(response);
+  return handleResponse<List[]>(response);
 }
 
-export async function createTag(name: string): Promise<Tag> {
-  const response = await fetch(`${API_BASE_URL}/tags`, {
+export async function fetchTodosByList(listId: number): Promise<Todo[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/todos?list_id=${encodeURIComponent(listId)}`,
+    {
+      headers: authHeaders(),
+    }
+  );
+  return handleResponse<Todo[]>(response);
+}
+
+export async function createList(name: string, color: string): Promise<List> {
+  const response = await fetch(`${API_BASE_URL}/lists`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, color }),
   });
-  return handleResponse<Tag>(response);
+  return handleResponse<List>(response);
 }
 
-export async function updateTag(id: number, name: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/tags/${id}`, {
+export async function updateList(
+  id: number,
+  name: string,
+  color: string
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/lists/${id}`, {
     method: "PATCH",
     headers: authHeaders(),
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, color }),
   });
   return handleVoidResponse(response);
 }
 
-export async function deleteTag(id: number): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/tags/${id}`, {
+export async function deleteList(id: number): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/lists/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
   return handleVoidResponse(response);
 }
 
-export async function addTagToTodo(todoId: number, tagId: number): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/todos/${todoId}/tags/${tagId}`, {
-    method: "POST",
-    headers: authHeaders(),
-  });
+export async function addListToTodo(
+  todoId: number,
+  listId: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/todos/${todoId}/lists/${listId}`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+    }
+  );
   return handleVoidResponse(response);
 }
 
-export async function removeTagFromTodo(
+export async function removeListFromTodo(
   todoId: number,
-  tagId: number
+  listId: number
 ): Promise<void> {
   const response = await fetch(
-    `${API_BASE_URL}/todos/${todoId}/tags/${tagId}`,
+    `${API_BASE_URL}/todos/${todoId}/lists/${listId}`,
     {
       method: "DELETE",
       headers: authHeaders(),

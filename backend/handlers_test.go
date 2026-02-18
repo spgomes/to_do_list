@@ -1367,3 +1367,495 @@ func TestAPITagsFullFlow(t *testing.T) {
 		t.Fatalf("expected 0 tags, got %d", len(tags))
 	}
 }
+
+// --- List API integration tests ---
+
+func TestHandleListLists_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists", nil)
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListLists(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var lists []List
+	if err := json.NewDecoder(w.Body).Decode(&lists); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(lists) != 0 {
+		t.Errorf("expected 0 lists, got %d", len(lists))
+	}
+}
+
+func TestHandleCreateList_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"name":"work","color":"#F8BBD9"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/lists", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateList(db)(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", w.Code)
+	}
+
+	var list List
+	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if list.Name != "work" {
+		t.Errorf("expected name 'work', got '%s'", list.Name)
+	}
+	if list.Color != "#F8BBD9" {
+		t.Errorf("expected color '#F8BBD9', got '%s'", list.Color)
+	}
+	if list.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+}
+
+func TestHandleCreateList_InvalidColor(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	body := `{"name":"work","color":"#000000"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/lists", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateList(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if errResp["error"] != "color must be a valid pastel hex from the palette" {
+		t.Errorf("expected color error, got '%s'", errResp["error"])
+	}
+}
+
+func TestHandleCreateList_Duplicate_Conflict(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	CreateList(db, "work", "#F8BBD9", user.ID)
+
+	body := `{"name":"work","color":"#E1BEE7"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/lists", bytes.NewBufferString(body))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleCreateList(db)(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", w.Code)
+	}
+
+	var errResp map[string]string
+	json.NewDecoder(w.Body).Decode(&errResp)
+	if errResp["error"] != "list with this name already exists" {
+		t.Errorf("expected duplicate list error, got '%s'", errResp["error"])
+	}
+}
+
+func TestHandleAddListToTodo_TodoNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, _ := CreateList(db, "work", "#F8BBD9", user.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/todos/999/lists/"+strconv.FormatInt(list.ID, 10), nil)
+	req.SetPathValue("id", "999")
+	req.SetPathValue("listId", strconv.FormatInt(list.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleAddListToTodo(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleAddListToTodo_ListNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, _ := CreateTodo(db, "Task", user.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/todos/"+strconv.FormatInt(todo.ID, 10)+"/lists/999", nil)
+	req.SetPathValue("id", strconv.FormatInt(todo.ID, 10))
+	req.SetPathValue("listId", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleAddListToTodo(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleListTodosByList_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo1, _ := CreateTodo(db, "Task in list", user.ID)
+	todo2, _ := CreateTodo(db, "Another in list", user.ID)
+	list, _ := CreateList(db, "work", "#F8BBD9", user.ID)
+	AddListToTodo(db, todo1.ID, list.ID, user.ID)
+	AddListToTodo(db, todo2.ID, list.ID, user.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/"+strconv.FormatInt(list.ID, 10)+"/todos", nil)
+	req.SetPathValue("id", strconv.FormatInt(list.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodosByList(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var todos []Todo
+	if err := json.NewDecoder(w.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(todos) != 2 {
+		t.Fatalf("expected 2 todos, got %d", len(todos))
+	}
+	// Each todo should have lists populated (including "work")
+	if len(todos[0].Lists) != 1 || todos[0].Lists[0].Name != "work" {
+		t.Errorf("expected todo to have list 'work', got %v", todos[0].Lists)
+	}
+}
+
+func TestHandleListTodosByList_EmptyList(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, _ := CreateList(db, "empty", "#BBDEFB", user.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/"+strconv.FormatInt(list.ID, 10)+"/todos", nil)
+	req.SetPathValue("id", strconv.FormatInt(list.ID, 10))
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodosByList(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var todos []Todo
+	if err := json.NewDecoder(w.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(todos) != 0 {
+		t.Errorf("expected 0 todos, got %d", len(todos))
+	}
+}
+
+func TestHandleListTodosByList_ListNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/999/todos", nil)
+	req.SetPathValue("id", "999")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodosByList(db)(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleListTodosByList_InvalidID(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/abc/todos", nil)
+	req.SetPathValue("id", "abc")
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodosByList(db)(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleListTodos_ReturnsLists(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, _ := CreateTodo(db, "My task", user.ID)
+	list, _ := CreateList(db, "work", "#F8BBD9", user.ID)
+	AddListToTodo(db, todo.ID, list.ID, user.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/todos", nil)
+	req = injectUserID(req, user.ID)
+	w := httptest.NewRecorder()
+
+	handleListTodos(db)(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var todos []Todo
+	if err := json.NewDecoder(w.Body).Decode(&todos); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(todos))
+	}
+	if len(todos[0].Lists) != 1 {
+		t.Fatalf("expected 1 list on todo, got %d", len(todos[0].Lists))
+	}
+	if todos[0].Lists[0].Name != "work" {
+		t.Errorf("expected list name 'work', got '%s'", todos[0].Lists[0].Name)
+	}
+	if todos[0].Lists[0].Color != "#F8BBD9" {
+		t.Errorf("expected list color '#F8BBD9', got '%s'", todos[0].Lists[0].Color)
+	}
+}
+
+// TestAPIListsFullFlow runs full integration: create list with color → list → update → create todo → associate → list todos with lists → disassociate → delete list.
+func TestAPIListsFullFlow(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	token, err := generateJWT(user.ID)
+	if err != nil {
+		t.Fatalf("generateJWT: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/auth/register", handleRegister(db))
+	mux.HandleFunc("POST /api/auth/login", handleLogin(db))
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /api/todos", handleListTodos(db))
+	protected.HandleFunc("POST /api/todos", handleCreateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}", handleUpdateTodo(db))
+	protected.HandleFunc("PATCH /api/todos/{id}/title", handleUpdateTodoTitle(db))
+	protected.HandleFunc("DELETE /api/todos/{id}", handleDeleteTodo(db))
+	protected.HandleFunc("POST /api/todos/{id}/tags/{tagId}", handleAddTagToTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}/tags/{tagId}", handleRemoveTagFromTodo(db))
+	protected.HandleFunc("POST /api/todos/{id}/lists/{listId}", handleAddListToTodo(db))
+	protected.HandleFunc("DELETE /api/todos/{id}/lists/{listId}", handleRemoveListFromTodo(db))
+	protected.HandleFunc("GET /api/tags", handleListTags(db))
+	protected.HandleFunc("POST /api/tags", handleCreateTag(db))
+	protected.HandleFunc("PATCH /api/tags/{id}", handleUpdateTag(db))
+	protected.HandleFunc("DELETE /api/tags/{id}", handleDeleteTag(db))
+	protected.HandleFunc("GET /api/lists", handleListLists(db))
+	protected.HandleFunc("GET /api/lists/{id}/todos", handleListTodosByList(db))
+	protected.HandleFunc("POST /api/lists", handleCreateList(db))
+	protected.HandleFunc("PATCH /api/lists/{id}", handleUpdateList(db))
+	protected.HandleFunc("DELETE /api/lists/{id}", handleDeleteList(db))
+	mux.Handle("/api/todos", jwtMiddleware(protected))
+	mux.Handle("/api/todos/", jwtMiddleware(protected))
+	mux.Handle("/api/tags", jwtMiddleware(protected))
+	mux.Handle("/api/tags/", jwtMiddleware(protected))
+	mux.Handle("/api/lists", jwtMiddleware(protected))
+	mux.Handle("/api/lists/", jwtMiddleware(protected))
+
+	srv := httptest.NewServer(corsMiddleware(mux))
+	defer srv.Close()
+
+	client := srv.Client()
+	baseURL := srv.URL
+
+	// 1. Create list with color
+	createListReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/lists", bytes.NewBufferString(`{"name":"work","color":"#F8BBD9"}`))
+	createListReq.Header.Set("Content-Type", "application/json")
+	createListReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(createListReq)
+	if err != nil {
+		t.Fatalf("create list: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var createdList List
+	json.NewDecoder(resp.Body).Decode(&createdList)
+	resp.Body.Close()
+	if createdList.Name != "work" {
+		t.Errorf("expected list name work, got %s", createdList.Name)
+	}
+	if createdList.Color != "#F8BBD9" {
+		t.Errorf("expected list color #F8BBD9, got %s", createdList.Color)
+	}
+
+	// 2. List lists
+	listListsReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/lists", nil)
+	listListsReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listListsReq)
+	if err != nil {
+		t.Fatalf("list lists: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var lists []List
+	json.NewDecoder(resp.Body).Decode(&lists)
+	resp.Body.Close()
+	if len(lists) != 1 || lists[0].Name != "work" {
+		t.Fatalf("expected 1 list 'work', got %v", lists)
+	}
+
+	// 3. Update list name and color
+	patchReq, _ := http.NewRequest(http.MethodPatch, baseURL+"/api/lists/"+strconv.FormatInt(createdList.ID, 10), bytes.NewBufferString(`{"name":"office","color":"#E1BEE7"}`))
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(patchReq)
+	if err != nil {
+		t.Fatalf("update list: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 4. Create todo
+	createTodoReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/todos", bytes.NewBufferString(`{"title":"Task one"}`))
+	createTodoReq.Header.Set("Content-Type", "application/json")
+	createTodoReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(createTodoReq)
+	if err != nil {
+		t.Fatalf("create todo: %v", err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	var createdTodo Todo
+	json.NewDecoder(resp.Body).Decode(&createdTodo)
+	resp.Body.Close()
+
+	// 5. Add list to todo
+	addListReq, _ := http.NewRequest(http.MethodPost, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10)+"/lists/"+strconv.FormatInt(createdList.ID, 10), nil)
+	addListReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(addListReq)
+	if err != nil {
+		t.Fatalf("add list to todo: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 5b. GET /api/lists/{id}/todos — should return the todo
+	listTodosByListReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/lists/"+strconv.FormatInt(createdList.ID, 10)+"/todos", nil)
+	listTodosByListReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTodosByListReq)
+	if err != nil {
+		t.Fatalf("list todos by list: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for GET /api/lists/{id}/todos, got %d", resp.StatusCode)
+	}
+	var listTodos []Todo
+	if err := json.NewDecoder(resp.Body).Decode(&listTodos); err != nil {
+		t.Fatalf("decode list todos: %v", err)
+	}
+	resp.Body.Close()
+	if len(listTodos) != 1 || listTodos[0].Title != "Task one" {
+		t.Fatalf("expected 1 todo 'Task one' from list, got %v", listTodos)
+	}
+
+	// 6. List todos — should include lists
+	listTodosReq, _ := http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listTodosReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTodosReq)
+	if err != nil {
+		t.Fatalf("list todos: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var todos []Todo
+	json.NewDecoder(resp.Body).Decode(&todos)
+	resp.Body.Close()
+	if len(todos) != 1 {
+		t.Fatalf("expected 1 todo, got %d", len(todos))
+	}
+	if len(todos[0].Lists) != 1 {
+		t.Fatalf("expected 1 list on todo, got %d", len(todos[0].Lists))
+	}
+	if todos[0].Lists[0].Name != "office" {
+		t.Errorf("expected list name office after update, got %s", todos[0].Lists[0].Name)
+	}
+	if todos[0].Lists[0].Color != "#E1BEE7" {
+		t.Errorf("expected list color #E1BEE7 after update, got %s", todos[0].Lists[0].Color)
+	}
+
+	// 7. Remove list from todo
+	removeListReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/todos/"+strconv.FormatInt(createdTodo.ID, 10)+"/lists/"+strconv.FormatInt(createdList.ID, 10), nil)
+	removeListReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(removeListReq)
+	if err != nil {
+		t.Fatalf("remove list: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 8. List todos again — no lists
+	listTodosReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/todos", nil)
+	listTodosReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listTodosReq)
+	if err != nil {
+		t.Fatalf("list todos: %v", err)
+	}
+	var todosAfterRemove []Todo
+	if err := json.NewDecoder(resp.Body).Decode(&todosAfterRemove); err != nil {
+		t.Fatalf("decode todos after remove: %v", err)
+	}
+	resp.Body.Close()
+	if len(todosAfterRemove) != 1 {
+		t.Fatalf("expected 1 todo after remove, got %d", len(todosAfterRemove))
+	}
+	if len(todosAfterRemove[0].Lists) != 0 {
+		t.Fatalf("expected todo with 0 lists after remove, got %d", len(todosAfterRemove[0].Lists))
+	}
+
+	// 9. Delete list
+	delListReq, _ := http.NewRequest(http.MethodDelete, baseURL+"/api/lists/"+strconv.FormatInt(createdList.ID, 10), nil)
+	delListReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(delListReq)
+	if err != nil {
+		t.Fatalf("delete list: %v", err)
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 10. List lists — empty
+	listListsReq, _ = http.NewRequest(http.MethodGet, baseURL+"/api/lists", nil)
+	listListsReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(listListsReq)
+	if err != nil {
+		t.Fatalf("list lists: %v", err)
+	}
+	json.NewDecoder(resp.Body).Decode(&lists)
+	resp.Body.Close()
+	if len(lists) != 0 {
+		t.Fatalf("expected 0 lists, got %d", len(lists))
+	}
+}

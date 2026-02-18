@@ -1,29 +1,29 @@
 import type { Todo } from "../types/todo";
-import type { Tag } from "../types/tag";
+import type { List } from "../types/list";
 import { TodoItem } from "./TodoItem";
 
 interface TodoListProps {
   todos: Todo[];
-  tags?: Tag[];
+  lists?: List[];
   onToggle: (id: number, completed: boolean) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onEdit: (id: number, title: string) => Promise<void>;
-  onAddTag?: (todoId: number, tagId: number) => Promise<void>;
-  onRemoveTag?: (todoId: number, tagId: number) => Promise<void>;
-  tagError?: string;
-  tagErrorTodoId?: number | null;
+  onAddList?: (todoId: number, listId: number) => Promise<void>;
+  onRemoveList?: (todoId: number, listId: number) => Promise<void>;
+  listError?: string;
+  listErrorTodoId?: number | null;
 }
 
 export function TodoList({
   todos,
-  tags = [],
+  lists = [],
   onToggle,
   onDelete,
   onEdit,
-  onAddTag,
-  onRemoveTag,
-  tagError,
-  tagErrorTodoId,
+  onAddList,
+  onRemoveList,
+  listError,
+  listErrorTodoId,
 }: TodoListProps) {
   if (todos.length === 0) {
     return <p className="empty-message">Nenhuma tarefa cadastrada</p>;
@@ -38,10 +38,10 @@ export function TodoList({
           onToggle={onToggle}
           onDelete={onDelete}
           onEdit={onEdit}
-          allTags={tags}
-          onAddTag={onAddTag}
-          onRemoveTag={onRemoveTag}
-          tagError={tagErrorTodoId === todo.id ? tagError : undefined}
+          allLists={lists}
+          onAddList={onAddList}
+          onRemoveList={onRemoveList}
+          listError={listErrorTodoId === todo.id ? listError : undefined}
         />
       ))}
     </ul>

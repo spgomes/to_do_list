@@ -1,43 +1,70 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import type { Todo } from "../types/todo";
-import type { Tag } from "../types/tag";
+import type { List } from "../types/list";
 import {
   fetchTodos,
   createTodo,
   updateTodo,
   updateTodoTitle,
   deleteTodo,
-  fetchTags,
-  createTag,
-  updateTag,
-  deleteTag,
-  addTagToTodo,
-  removeTagFromTodo,
+  fetchLists,
+  createList,
+  updateList,
+  deleteList,
+  addListToTodo,
+  removeListFromTodo,
 } from "../services/api";
 import { TodoForm } from "./TodoForm";
-import { TodoList } from "./TodoList";
-import { TagsManager } from "./TagsManager";
+import { ListCard } from "./ListCard";
+import { ListsManager } from "./ListsManager";
 import { useAuth } from "../contexts/AuthContext";
 
 export function TodoApp() {
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tagError, setTagError] = useState<string | null>(null);
-  const [tagErrorTodoId, setTagErrorTodoId] = useState<number | null>(null);
-  const [showTagsManager, setShowTagsManager] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [listErrorTodoId, setListErrorTodoId] = useState<number | null>(null);
+  const [showListsManager, setShowListsManager] = useState(false);
   const { logout } = useAuth();
 
   useEffect(() => {
-    Promise.all([fetchTodos(), fetchTags()])
-      .then(([todosData, tagsData]) => {
-        setTodos(todosData);
-        setTags(tagsData);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all([fetchTodos(), fetchLists()])
+      .then(([todosData, listsData]) => {
+        if (!cancelled) {
+          setTodos(todosData);
+          setLists(listsData);
+        }
       })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const listCardsData = useMemo(() => {
+    if (lists.length === 0) {
+      return [{ list: null as List | null, todos }];
+    }
+    const result: { list: List | null; todos: Todo[] }[] = lists.map((list) => ({
+      list,
+      todos: todos.filter((t) => t.lists?.some((l) => l.id === list.id)),
+    }));
+    const unlisted = todos.filter((t) => !t.lists?.length);
+    if (unlisted.length > 0) {
+      result.push({ list: null, todos: unlisted });
+    }
+    return result;
+  }, [lists, todos]);
 
   async function handleAdd(title: string) {
     try {
@@ -75,83 +102,75 @@ export function TodoApp() {
     }
   }
 
-  async function handleAddTag(todoId: number, tagId: number) {
-    setTagErrorTodoId(todoId);
-    setTagError(null);
+  async function handleAddList(todoId: number, listId: number) {
+    setListErrorTodoId(todoId);
+    setListError(null);
     try {
-      await addTagToTodo(todoId, tagId);
+      await addListToTodo(todoId, listId);
       const updated = await fetchTodos();
       setTodos(updated);
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Erro ao adicionar tag");
+      setListError(err instanceof Error ? err.message : "Erro ao adicionar lista");
     }
   }
 
-  async function handleRemoveTag(todoId: number, tagId: number) {
-    setTagError(null);
+  async function handleRemoveList(todoId: number, listId: number) {
+    setListError(null);
     try {
-      await removeTagFromTodo(todoId, tagId);
-      setTodos((prev) =>
-        prev.map((t) =>
-          t.id === todoId
-            ? {
-                ...t,
-                tags: (t.tags ?? []).filter((tag) => tag.id !== tagId),
-              }
-            : t
-        )
-      );
+      await removeListFromTodo(todoId, listId);
+      const updated = await fetchTodos();
+      setTodos(updated);
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Erro ao remover tag");
-      setTagErrorTodoId(todoId);
+      setListError(err instanceof Error ? err.message : "Erro ao remover lista");
+      setListErrorTodoId(todoId);
     }
   }
 
-  async function handleCreateTag(name: string) {
-    setTagError(null);
+  async function handleCreateList(name: string, color: string) {
+    setListError(null);
     try {
-      const created = await createTag(name);
-      setTags((prev) => [created, ...prev]);
+      const created = await createList(name, color);
+      setLists((prev) => [created, ...prev]);
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Erro ao criar tag");
+      setListError(err instanceof Error ? err.message : "Erro ao criar lista");
       throw err;
     }
   }
 
-  async function handleUpdateTag(id: number, name: string) {
-    setTagError(null);
+  async function handleUpdateList(id: number, name: string, color: string) {
+    setListError(null);
     try {
-      await updateTag(id, name);
-      setTags((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, name } : t))
+      await updateList(id, name, color);
+      setLists((prev) =>
+        prev.map((l) => (l.id === id ? { ...l, name, color } : l))
       );
       setTodos((prev) =>
         prev.map((t) => ({
           ...t,
-          tags: (t.tags ?? []).map((tag) =>
-            tag.id === id ? { ...tag, name } : tag
+          lists: (t.lists ?? []).map((list) =>
+            list.id === id ? { ...list, name, color } : list
           ),
         }))
       );
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Erro ao renomear tag");
+      setListError(err instanceof Error ? err.message : "Erro ao renomear lista");
       throw err;
     }
   }
 
-  async function handleDeleteTag(id: number) {
-    setTagError(null);
+  async function handleDeleteList(id: number) {
+    setListError(null);
     try {
-      await deleteTag(id);
-      setTags((prev) => prev.filter((t) => t.id !== id));
+      await deleteList(id);
+      setLists((prev) => prev.filter((l) => l.id !== id));
       setTodos((prev) =>
         prev.map((t) => ({
           ...t,
-          tags: (t.tags ?? []).filter((tag) => tag.id !== id),
+          lists: (t.lists ?? []).filter((list) => list.id !== id),
         }))
       );
     } catch (err) {
-      setTagError(err instanceof Error ? err.message : "Erro ao remover tag");
+      setListError(err instanceof Error ? err.message : "Erro ao remover lista");
       throw err;
     }
   }
@@ -199,36 +218,42 @@ export function TodoApp() {
         <TodoForm onAdd={handleAdd} />
         <button
           type="button"
-          className="tags-manager-toggle"
-          onClick={() => setShowTagsManager((v) => !v)}
-          aria-expanded={showTagsManager}
-          aria-controls="tags-manager-section"
+          className="lists-manager-toggle"
+          onClick={() => setShowListsManager((v) => !v)}
+          aria-expanded={showListsManager}
+          aria-controls="lists-manager-section"
         >
-          {showTagsManager ? "Ocultar gerenciamento de tags" : "Gerenciar tags"}
+          {showListsManager ? "Ocultar gerenciamento de listas" : "Gerenciar listas"}
         </button>
-        {showTagsManager && (
-          <div id="tags-manager-section">
-            <TagsManager
-              tags={tags}
-              onCreateTag={handleCreateTag}
-              onUpdateTag={handleUpdateTag}
-              onDeleteTag={handleDeleteTag}
-              error={tagError}
-              onClearError={() => setTagError(null)}
+        {showListsManager && (
+          <div id="lists-manager-section">
+            <ListsManager
+              lists={lists}
+              onCreateList={handleCreateList}
+              onUpdateList={handleUpdateList}
+              onDeleteList={handleDeleteList}
+              error={listError}
+              onClearError={() => setListError(null)}
             />
           </div>
         )}
-        <TodoList
-          todos={todos}
-          tags={tags}
-          onToggle={handleToggle}
-          onDelete={handleDelete}
-          onEdit={handleEditTodo}
-          onAddTag={handleAddTag}
-          onRemoveTag={handleRemoveTag}
-          tagError={tagError}
-          tagErrorTodoId={tagErrorTodoId}
-        />
+        <div className="list-cards-grid" role="region" aria-label="Listas temáticas com tarefas">
+          {listCardsData.map(({ list, todos: listTodos }) => (
+            <ListCard
+              key={list?.id ?? "unlisted"}
+              list={list}
+              todos={listTodos}
+              allLists={lists}
+              onToggle={handleToggle}
+              onDelete={handleDelete}
+              onEdit={handleEditTodo}
+              onAddList={handleAddList}
+              onRemoveList={handleRemoveList}
+              listError={listError ?? undefined}
+              listErrorTodoId={listErrorTodoId}
+            />
+          ))}
+        </div>
       </main>
     </div>
   );

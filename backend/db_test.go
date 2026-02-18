@@ -1351,3 +1351,409 @@ func TestListTodoTags_DeletedTodo(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got: %v", err)
 	}
 }
+
+// --- List Tests ---
+
+func TestInitDB_CreatesListsTables(t *testing.T) {
+	db := setupTestDB(t)
+
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='lists'").Scan(&name)
+	if err != nil {
+		t.Fatalf("expected lists table to exist, got error: %v", err)
+	}
+	if name != "lists" {
+		t.Errorf("expected table name 'lists', got '%s'", name)
+	}
+
+	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='todo_lists'").Scan(&name)
+	if err != nil {
+		t.Fatalf("expected todo_lists table to exist, got error: %v", err)
+	}
+	if name != "todo_lists" {
+		t.Errorf("expected table name 'todo_lists', got '%s'", name)
+	}
+}
+
+func TestCreateList_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, err := CreateList(db, "work", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if list.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+	if list.Name != "work" {
+		t.Errorf("expected name 'work', got '%s'", list.Name)
+	}
+	if list.Color != "#F8BBD9" {
+		t.Errorf("expected color '#F8BBD9', got '%s'", list.Color)
+	}
+	if list.CreatedAt == "" {
+		t.Error("expected non-empty CreatedAt")
+	}
+	if list.UserID != user.ID {
+		t.Errorf("expected UserID %d, got %d", user.ID, list.UserID)
+	}
+}
+
+func TestCreateList_EmptyName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"tab only", "\t"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := CreateList(db, tc.input, "#F8BBD9", user.ID)
+			if err == nil {
+				t.Error("expected error for empty list name, got nil")
+			}
+			if !errors.Is(err, ErrEmptyListName) {
+				t.Errorf("expected ErrEmptyListName, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateList_NameTooLong(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	longName := strings.Repeat("a", MaxListNameLength+1)
+	_, err := CreateList(db, longName, "#F8BBD9", user.ID)
+	if err == nil {
+		t.Error("expected error for list name exceeding max length, got nil")
+	}
+	if !errors.Is(err, ErrListNameTooLong) {
+		t.Errorf("expected ErrListNameTooLong, got: %v", err)
+	}
+}
+
+func TestCreateList_DuplicateName(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	_, err := CreateList(db, "duplicate", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("first CreateList failed: %v", err)
+	}
+
+	_, err = CreateList(db, "duplicate", "#E1BEE7", user.ID)
+	if err == nil {
+		t.Error("expected error for duplicate list name, got nil")
+	}
+	if !errors.Is(err, ErrDuplicateList) {
+		t.Errorf("expected ErrDuplicateList, got: %v", err)
+	}
+}
+
+func TestCreateList_InvalidColor(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	_, err := CreateList(db, "work", "#000000", user.ID)
+	if err == nil {
+		t.Error("expected error for invalid color, got nil")
+	}
+	if !errors.Is(err, ErrInvalidColor) {
+		t.Errorf("expected ErrInvalidColor, got: %v", err)
+	}
+}
+
+func TestCreateList_DefaultColorWhenEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, err := CreateList(db, "work", "", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList with empty color failed: %v", err)
+	}
+	if list.Color != DefaultListColor {
+		t.Errorf("expected default color %s, got '%s'", DefaultListColor, list.Color)
+	}
+}
+
+func TestListLists_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	lists, err := ListLists(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListLists failed: %v", err)
+	}
+	if len(lists) != 0 {
+		t.Errorf("expected 0 lists, got %d", len(lists))
+	}
+	if lists == nil {
+		t.Error("expected empty slice, got nil")
+	}
+}
+
+func TestListLists_UserIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	user1 := createTestUser(t, db, "user1@test.com", "hash1")
+	user2 := createTestUser(t, db, "user2@test.com", "hash2")
+
+	CreateList(db, "User1 List", "#F8BBD9", user1.ID)
+	CreateList(db, "User2 List", "#E1BEE7", user2.ID)
+
+	lists1, err := ListLists(db, user1.ID)
+	if err != nil {
+		t.Fatalf("ListLists(user1) failed: %v", err)
+	}
+	if len(lists1) != 1 {
+		t.Errorf("expected 1 list for user1, got %d", len(lists1))
+	}
+	if lists1[0].Name != "User1 List" {
+		t.Errorf("expected 'User1 List', got '%s'", lists1[0].Name)
+	}
+
+	lists2, err := ListLists(db, user2.ID)
+	if err != nil {
+		t.Fatalf("ListLists(user2) failed: %v", err)
+	}
+	if len(lists2) != 1 {
+		t.Errorf("expected 1 list for user2, got %d", len(lists2))
+	}
+}
+
+func TestUpdateList_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, err := CreateList(db, "oldname", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if err := UpdateList(db, list.ID, "newname", "#E1BEE7", user.ID); err != nil {
+		t.Fatalf("UpdateList failed: %v", err)
+	}
+
+	lists, err := ListLists(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListLists failed: %v", err)
+	}
+	if len(lists) != 1 {
+		t.Fatalf("expected 1 list, got %d", len(lists))
+	}
+	if lists[0].Name != "newname" {
+		t.Errorf("expected name 'newname', got '%s'", lists[0].Name)
+	}
+	if lists[0].Color != "#E1BEE7" {
+		t.Errorf("expected color '#E1BEE7', got '%s'", lists[0].Color)
+	}
+}
+
+func TestDeleteList_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	list, err := CreateList(db, "To be deleted", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if err := DeleteList(db, list.ID, user.ID); err != nil {
+		t.Fatalf("DeleteList failed: %v", err)
+	}
+
+	lists, err := ListLists(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListLists failed: %v", err)
+	}
+	if len(lists) != 0 {
+		t.Errorf("expected 0 lists after deletion, got %d", len(lists))
+	}
+}
+
+func TestAddListToTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	list, err := CreateList(db, "work", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if err := AddListToTodo(db, todo.ID, list.ID, user.ID); err != nil {
+		t.Fatalf("AddListToTodo failed: %v", err)
+	}
+
+	lists, err := ListTodoLists(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoLists failed: %v", err)
+	}
+	if len(lists) != 1 {
+		t.Fatalf("expected 1 list, got %d", len(lists))
+	}
+	if lists[0].ID != list.ID {
+		t.Errorf("expected list ID %d, got %d", list.ID, lists[0].ID)
+	}
+}
+
+func TestAddListToTodo_Idempotent(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	list, err := CreateList(db, "work", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if err := AddListToTodo(db, todo.ID, list.ID, user.ID); err != nil {
+		t.Fatalf("first AddListToTodo failed: %v", err)
+	}
+	if err := AddListToTodo(db, todo.ID, list.ID, user.ID); err != nil {
+		t.Fatalf("second AddListToTodo failed: %v", err)
+	}
+
+	lists, err := ListTodoLists(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoLists failed: %v", err)
+	}
+	if len(lists) != 1 {
+		t.Fatalf("expected 1 list (idempotent), got %d", len(lists))
+	}
+}
+
+func TestRemoveListFromTodo_Success(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	list, err := CreateList(db, "work", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	if err := AddListToTodo(db, todo.ID, list.ID, user.ID); err != nil {
+		t.Fatalf("AddListToTodo failed: %v", err)
+	}
+
+	if err := RemoveListFromTodo(db, todo.ID, list.ID, user.ID); err != nil {
+		t.Fatalf("RemoveListFromTodo failed: %v", err)
+	}
+
+	lists, err := ListTodoLists(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoLists failed: %v", err)
+	}
+	if len(lists) != 0 {
+		t.Errorf("expected 0 lists after removal, got %d", len(lists))
+	}
+}
+
+func TestRemoveListFromTodo_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	todo, err := CreateTodo(db, "Test task", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	list, err := CreateList(db, "work", "#F8BBD9", user.ID)
+	if err != nil {
+		t.Fatalf("CreateList failed: %v", err)
+	}
+
+	err = RemoveListFromTodo(db, todo.ID, list.ID, user.ID)
+	if err == nil {
+		t.Error("expected error for non-existent association, got nil")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+func TestMigration_TagsToLists(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, db, "user@test.com", "hash")
+
+	// Create tags and todo_tags (pre-migration data)
+	tag1, err := CreateTag(db, "work", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(work) failed: %v", err)
+	}
+	tag2, err := CreateTag(db, "home", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTag(home) failed: %v", err)
+	}
+
+	todo, err := CreateTodo(db, "Task with tags", user.ID)
+	if err != nil {
+		t.Fatalf("CreateTodo failed: %v", err)
+	}
+
+	if err := AddTagToTodo(db, todo.ID, tag1.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo failed: %v", err)
+	}
+	if err := AddTagToTodo(db, todo.ID, tag2.ID, user.ID); err != nil {
+		t.Fatalf("AddTagToTodo failed: %v", err)
+	}
+
+	// Run migration (idempotent; migrates tags → lists, todo_tags → todo_lists)
+	if err := migrateTagsToLists(db); err != nil {
+		t.Fatalf("migrateTagsToLists failed: %v", err)
+	}
+
+	// lists and todo_lists should now have the migrated data
+	lists, err := ListLists(db, user.ID)
+	if err != nil {
+		t.Fatalf("ListLists failed: %v", err)
+	}
+	if len(lists) != 2 {
+		t.Fatalf("expected 2 lists after migration, got %d", len(lists))
+	}
+
+	// Verify todo has lists (migrated from todo_tags)
+	todoLists, err := ListTodoLists(db, todo.ID, user.ID)
+	if err != nil {
+		t.Fatalf("ListTodoLists failed: %v", err)
+	}
+	if len(todoLists) != 2 {
+		t.Fatalf("expected 2 lists on todo after migration, got %d", len(todoLists))
+	}
+
+	names := make(map[string]bool)
+	for _, l := range todoLists {
+		names[l.Name] = true
+	}
+	if !names["work"] || !names["home"] {
+		t.Errorf("expected work and home lists on todo, got names: %v", names)
+	}
+
+	// All migrated lists should have default color
+	for _, l := range lists {
+		if l.Color != DefaultListColor {
+			t.Errorf("expected migrated list color %s, got %s", DefaultListColor, l.Color)
+		}
+	}
+}

@@ -1,19 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   fetchTodos,
+  fetchTodosByList,
   createTodo,
   updateTodo,
   updateTodoTitle,
   deleteTodo,
-  fetchTags,
-  createTag,
-  updateTag,
-  deleteTag,
-  addTagToTodo,
-  removeTagFromTodo,
+  fetchLists,
+  createList,
+  updateList,
+  deleteList,
+  addListToTodo,
+  removeListFromTodo,
 } from "./api";
 import type { Todo } from "../types/todo";
-import type { Tag } from "../types/tag";
+import type { List } from "../types/list";
 
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
@@ -50,6 +51,25 @@ describe("fetchTodos", () => {
     expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/todos", {
       headers: { "Content-Type": "application/json" },
     });
+  });
+
+  it("returns todos with lists when API includes lists", async () => {
+    const todos: Todo[] = [
+      {
+        id: 1,
+        title: "Task 1",
+        completed: false,
+        created_at: "2025-01-01",
+        lists: [{ id: 1, name: "Work", color: "#BBDEFB", created_at: "2025-01-01" }],
+      },
+    ];
+    mockFetch.mockResolvedValueOnce(jsonResponse(todos));
+
+    const result = await fetchTodos();
+
+    expect(result).toEqual(todos);
+    expect(result[0].lists).toHaveLength(1);
+    expect(result[0].lists![0].name).toBe("Work");
   });
 
   it("sends Authorization header when token exists", async () => {
@@ -227,20 +247,70 @@ describe("deleteTodo", () => {
   });
 });
 
-// --- fetchTags ---
+// --- fetchTodosByList ---
 
-describe("fetchTags", () => {
-  it("returns array of tags when API responds 200", async () => {
-    const tags: Tag[] = [
-      { id: 1, name: "work", created_at: "2025-01-01" },
-      { id: 2, name: "home", created_at: "2025-01-02" },
+describe("fetchTodosByList", () => {
+  it("returns todos for the given list when API responds 200", async () => {
+    const todos: Todo[] = [
+      {
+        id: 1,
+        title: "Task in list",
+        completed: false,
+        created_at: "2025-01-01",
+        lists: [{ id: 5, name: "work", color: "#BBDEFB", created_at: "2025-01-01" }],
+      },
     ];
-    mockFetch.mockResolvedValueOnce(jsonResponse(tags));
+    mockFetch.mockResolvedValueOnce(jsonResponse(todos));
 
-    const result = await fetchTags();
+    const result = await fetchTodosByList(5);
 
-    expect(result).toEqual(tags);
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/tags", {
+    expect(result).toEqual(todos);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/todos?list_id=5",
+      { headers: { "Content-Type": "application/json" } }
+    );
+  });
+
+  it("sends Authorization header when token exists", async () => {
+    localStorage.setItem("token", "my-jwt");
+    mockFetch.mockResolvedValueOnce(jsonResponse([]));
+
+    await fetchTodosByList(3);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/todos?list_id=3",
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer my-jwt",
+        },
+      }
+    );
+  });
+
+  it("throws error when API responds 404", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: "list not found" }, 404)
+    );
+
+    await expect(fetchTodosByList(999)).rejects.toThrow("list not found");
+  });
+});
+
+// --- fetchLists ---
+
+describe("fetchLists", () => {
+  it("returns array of lists when API responds 200", async () => {
+    const lists: List[] = [
+      { id: 1, name: "work", color: "#BBDEFB", created_at: "2025-01-01" },
+      { id: 2, name: "home", color: "#B2DFDB", created_at: "2025-01-02" },
+    ];
+    mockFetch.mockResolvedValueOnce(jsonResponse(lists));
+
+    const result = await fetchLists();
+
+    expect(result).toEqual(lists);
+    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/lists", {
       headers: { "Content-Type": "application/json" },
     });
   });
@@ -249,9 +319,9 @@ describe("fetchTags", () => {
     localStorage.setItem("token", "my-jwt");
     mockFetch.mockResolvedValueOnce(jsonResponse([]));
 
-    await fetchTags();
+    await fetchLists();
 
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/tags", {
+    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/lists", {
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer my-jwt",
@@ -264,99 +334,104 @@ describe("fetchTags", () => {
       jsonResponse({ error: "internal server error" }, 500)
     );
 
-    await expect(fetchTags()).rejects.toThrow("internal server error");
+    await expect(fetchLists()).rejects.toThrow("internal server error");
   });
 });
 
-// --- createTag ---
+// --- createList ---
 
-describe("createTag", () => {
-  it("sends POST with name and returns created tag", async () => {
+describe("createList", () => {
+  it("sends POST with name and color and returns created list", async () => {
     localStorage.setItem("token", "my-token");
-    const created: Tag = {
+    const created: List = {
       id: 1,
       name: "work",
+      color: "#BBDEFB",
       created_at: "2025-01-01",
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(created, 201));
 
-    const result = await createTag("work");
+    const result = await createList("work", "#BBDEFB");
 
     expect(result).toEqual(created);
-    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/tags", {
+    expect(mockFetch).toHaveBeenCalledWith("http://localhost:8080/api/lists", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer my-token",
       },
-      body: JSON.stringify({ name: "work" }),
+      body: JSON.stringify({ name: "work", color: "#BBDEFB" }),
     });
   });
 
   it("throws error when API responds 400", async () => {
     mockFetch.mockResolvedValueOnce(
-      jsonResponse({ error: "tag name cannot be empty" }, 400)
+      jsonResponse({ error: "list name cannot be empty" }, 400)
     );
 
-    await expect(createTag("")).rejects.toThrow("tag name cannot be empty");
+    await expect(createList("", "#BBDEFB")).rejects.toThrow(
+      "list name cannot be empty"
+    );
   });
 
   it("throws error when API responds 409", async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse(
-        { error: "tag with this name already exists" },
+        { error: "list with this name already exists" },
         409
       )
     );
 
-    await expect(createTag("work")).rejects.toThrow(
-      "tag with this name already exists"
+    await expect(createList("work", "#BBDEFB")).rejects.toThrow(
+      "list with this name already exists"
     );
   });
 });
 
-// --- updateTag ---
+// --- updateList ---
 
-describe("updateTag", () => {
-  it("sends PATCH with auth header and new name", async () => {
+describe("updateList", () => {
+  it("sends PATCH with auth header, name and color", async () => {
     localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-    await updateTag(5, "newname");
+    await updateList(5, "newname", "#E1BEE7");
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/tags/5",
+      "http://localhost:8080/api/lists/5",
       {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer my-token",
         },
-        body: JSON.stringify({ name: "newname" }),
+        body: JSON.stringify({ name: "newname", color: "#E1BEE7" }),
       }
     );
   });
 
   it("throws error when API responds 404", async () => {
     mockFetch.mockResolvedValueOnce(
-      jsonResponse({ error: "tag not found" }, 404)
+      jsonResponse({ error: "list not found" }, 404)
     );
 
-    await expect(updateTag(999, "name")).rejects.toThrow("tag not found");
+    await expect(updateList(999, "name", "#BBDEFB")).rejects.toThrow(
+      "list not found"
+    );
   });
 });
 
-// --- deleteTag ---
+// --- deleteList ---
 
-describe("deleteTag", () => {
+describe("deleteList", () => {
   it("sends DELETE with auth header to correct ID", async () => {
     localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-    await deleteTag(3);
+    await deleteList(3);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/tags/3",
+      "http://localhost:8080/api/lists/3",
       {
         method: "DELETE",
         headers: {
@@ -369,24 +444,24 @@ describe("deleteTag", () => {
 
   it("throws error when API responds 404", async () => {
     mockFetch.mockResolvedValueOnce(
-      jsonResponse({ error: "tag not found" }, 404)
+      jsonResponse({ error: "list not found" }, 404)
     );
 
-    await expect(deleteTag(999)).rejects.toThrow("tag not found");
+    await expect(deleteList(999)).rejects.toThrow("list not found");
   });
 });
 
-// --- addTagToTodo ---
+// --- addListToTodo ---
 
-describe("addTagToTodo", () => {
-  it("sends POST to correct todo and tag IDs", async () => {
+describe("addListToTodo", () => {
+  it("sends POST to correct todo and list IDs", async () => {
     localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-    await addTagToTodo(10, 20);
+    await addListToTodo(10, 20);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/todos/10/tags/20",
+      "http://localhost:8080/api/todos/10/lists/20",
       {
         method: "POST",
         headers: {
@@ -402,21 +477,21 @@ describe("addTagToTodo", () => {
       jsonResponse({ error: "todo not found" }, 404)
     );
 
-    await expect(addTagToTodo(999, 1)).rejects.toThrow("todo not found");
+    await expect(addListToTodo(999, 1)).rejects.toThrow("todo not found");
   });
 });
 
-// --- removeTagFromTodo ---
+// --- removeListFromTodo ---
 
-describe("removeTagFromTodo", () => {
-  it("sends DELETE to correct todo and tag IDs", async () => {
+describe("removeListFromTodo", () => {
+  it("sends DELETE to correct todo and list IDs", async () => {
     localStorage.setItem("token", "my-token");
     mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-    await removeTagFromTodo(10, 20);
+    await removeListFromTodo(10, 20);
 
     expect(mockFetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/todos/10/tags/20",
+      "http://localhost:8080/api/todos/10/lists/20",
       {
         method: "DELETE",
         headers: {
@@ -429,11 +504,11 @@ describe("removeTagFromTodo", () => {
 
   it("throws error when API responds 404", async () => {
     mockFetch.mockResolvedValueOnce(
-      jsonResponse({ error: "todo or tag association not found" }, 404)
+      jsonResponse({ error: "todo or list association not found" }, 404)
     );
 
-    await expect(removeTagFromTodo(999, 1)).rejects.toThrow(
-      "todo or tag association not found"
+    await expect(removeListFromTodo(999, 1)).rejects.toThrow(
+      "todo or list association not found"
     );
   });
 });

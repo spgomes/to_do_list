@@ -125,10 +125,32 @@ func handleLogin(db *sql.DB) http.HandlerFunc {
 
 // handleListTodos returns all todos for the authenticated user as a JSON array, with tags per todo.
 // GET /api/todos → 200 []Todo (each with tags)
+// GET /api/todos?list_id=123 → 200 []Todo (filtered by list)
 func handleListTodos(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := getUserIDFromContext(r)
-		todos, err := GetAllTodos(db, userID)
+		var todos []Todo
+		var err error
+		if listIDStr := r.URL.Query().Get("list_id"); listIDStr != "" {
+			listID, parseErr := strconv.ParseInt(listIDStr, 10, 64)
+			if parseErr != nil {
+				writeError(w, http.StatusBadRequest, "invalid list_id")
+				return
+			}
+			todos, err = ListTodosByList(db, listID, userID)
+			if err != nil {
+				if errors.Is(err, ErrListNotFound) {
+					writeError(w, http.StatusNotFound, "list not found")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to fetch todos")
+				return
+			}
+			// ListTodosByList already populates Lists on each todo; no need to populate tags
+			writeJSON(w, http.StatusOK, todos)
+			return
+		}
+		todos, err = GetAllTodos(db, userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to fetch todos")
 			return
@@ -137,9 +159,15 @@ func handleListTodos(db *sql.DB) http.HandlerFunc {
 			tags, err := ListTodoTags(db, todos[i].ID, userID)
 			if err != nil {
 				todos[i].Tags = nil
-				continue
+			} else {
+				todos[i].Tags = tags
 			}
-			todos[i].Tags = tags
+			lists, err := ListTodoLists(db, todos[i].ID, userID)
+			if err != nil {
+				todos[i].Lists = nil
+			} else {
+				todos[i].Lists = lists
+			}
 		}
 		writeJSON(w, http.StatusOK, todos)
 	}
@@ -459,6 +487,247 @@ func handleRemoveTagFromTodo(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "failed to remove tag from todo")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// --- List Handlers ---
+
+// handleListTodosByList returns all todos for a specific list for the authenticated user.
+// GET /api/lists/{id}/todos → 200 []Todo (each with lists populated)
+func handleListTodosByList(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		listID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid list ID")
+			return
+		}
+
+		todos, err := ListTodosByList(db, listID, userID)
+		if err != nil {
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to fetch todos")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, todos)
+	}
+}
+
+// handleListLists returns all lists for the authenticated user.
+// GET /api/lists → 200 []List
+func handleListLists(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		lists, err := ListLists(db, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to fetch lists")
+			return
+		}
+		writeJSON(w, http.StatusOK, lists)
+	}
+}
+
+// handleCreateList creates a new list for the authenticated user.
+// POST /api/lists → 201 List
+func handleCreateList(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		var req struct {
+			Name  string `json:"name"`
+			Color string `json:"color"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		list, err := CreateList(db, req.Name, req.Color, userID)
+		if err != nil {
+			if errors.Is(err, ErrEmptyListName) {
+				writeError(w, http.StatusBadRequest, "list name cannot be empty")
+				return
+			}
+			if errors.Is(err, ErrListNameTooLong) {
+				writeError(w, http.StatusBadRequest, "list name exceeds maximum length of 50 characters")
+				return
+			}
+			if errors.Is(err, ErrDuplicateList) {
+				writeError(w, http.StatusConflict, "list with this name already exists")
+				return
+			}
+			if errors.Is(err, ErrInvalidColor) {
+				writeError(w, http.StatusBadRequest, "color must be a valid pastel hex from the palette")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to create list")
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, list)
+	}
+}
+
+// handleUpdateList updates the name and/or color of a list for the authenticated user.
+// PATCH /api/lists/{id} → 204
+func handleUpdateList(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid list ID")
+			return
+		}
+
+		var req struct {
+			Name  string `json:"name"`
+			Color string `json:"color"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+
+		existing, err := GetListByID(db, id, userID)
+		if err != nil {
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to fetch list")
+			return
+		}
+		name := req.Name
+		if name == "" {
+			name = existing.Name
+		}
+		color := req.Color
+		if color == "" {
+			color = existing.Color
+		}
+
+		if err := UpdateList(db, id, name, color, userID); err != nil {
+			if errors.Is(err, ErrEmptyListName) {
+				writeError(w, http.StatusBadRequest, "list name cannot be empty")
+				return
+			}
+			if errors.Is(err, ErrListNameTooLong) {
+				writeError(w, http.StatusBadRequest, "list name exceeds maximum length of 50 characters")
+				return
+			}
+			if errors.Is(err, ErrDuplicateList) {
+				writeError(w, http.StatusConflict, "list with this name already exists")
+				return
+			}
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to update list")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleDeleteList deletes a list for the authenticated user.
+// DELETE /api/lists/{id} → 204
+func handleDeleteList(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid list ID")
+			return
+		}
+
+		if err := DeleteList(db, id, userID); err != nil {
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to delete list")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleAddListToTodo associates a list with a todo for the authenticated user.
+// POST /api/todos/{id}/lists/{listId} → 204
+func handleAddListToTodo(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		todoIDStr := r.PathValue("id")
+		listIDStr := r.PathValue("listId")
+		todoID, err := strconv.ParseInt(todoIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid todo ID")
+			return
+		}
+		listID, err := strconv.ParseInt(listIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid list ID")
+			return
+		}
+
+		if err := AddListToTodo(db, todoID, listID, userID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeError(w, http.StatusNotFound, "todo not found")
+				return
+			}
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to add list to todo")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleRemoveListFromTodo removes the association between a list and a todo.
+// DELETE /api/todos/{id}/lists/{listId} → 204
+func handleRemoveListFromTodo(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := getUserIDFromContext(r)
+		todoIDStr := r.PathValue("id")
+		listIDStr := r.PathValue("listId")
+		todoID, err := strconv.ParseInt(todoIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid todo ID")
+			return
+		}
+		listID, err := strconv.ParseInt(listIDStr, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid list ID")
+			return
+		}
+
+		if err := RemoveListFromTodo(db, todoID, listID, userID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeError(w, http.StatusNotFound, "todo or list association not found")
+				return
+			}
+			if errors.Is(err, ErrListNotFound) {
+				writeError(w, http.StatusNotFound, "list not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to remove list from todo")
 			return
 		}
 
