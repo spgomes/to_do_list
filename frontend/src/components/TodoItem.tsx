@@ -1,17 +1,11 @@
 import { useState } from "react";
 import type { Todo } from "../types/todo";
-import type { List } from "../types/list";
-import { ListSelector } from "./ListSelector";
 
 interface TodoItemProps {
   todo: Todo;
   onToggle: (id: number, completed: boolean) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onEdit: (id: number, title: string) => Promise<void>;
-  allLists?: List[];
-  onAddList?: (todoId: number, listId: number) => Promise<void>;
-  onRemoveList?: (todoId: number, listId: number) => Promise<void>;
-  listError?: string;
 }
 
 export function TodoItem({
@@ -19,14 +13,21 @@ export function TodoItem({
   onToggle,
   onDelete,
   onEdit,
-  allLists = [],
-  onAddList,
-  onRemoveList,
-  listError,
 }: TodoItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(todo.title);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  function handleDragStart(e: React.DragEvent) {
+    e.dataTransfer.setData("todoId", String(todo.id));
+    e.dataTransfer.effectAllowed = "move";
+    setIsDragging(true);
+  }
+
+  function handleDragEnd() {
+    setIsDragging(false);
+  }
 
   function handleToggle() {
     onToggle(todo.id, !todo.completed);
@@ -66,7 +67,13 @@ export function TodoItem({
   }
 
   return (
-    <li className={`todo-item ${todo.completed ? "completed" : ""}`}>
+    <li
+      className={`todo-item ${todo.completed ? "completed" : ""} ${isDragging ? "dragging" : ""}`}
+      data-testid="todo-item"
+      draggable={true}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <label className="todo-label">
         <input
           type="checkbox"
@@ -126,19 +133,6 @@ export function TodoItem({
       >
         Remover
       </button>
-      {allLists.length > 0 && onAddList && onRemoveList && (
-        <div className="todo-item-tags">
-          <ListSelector
-            todoId={todo.id}
-            currentLists={todo.lists ?? []}
-            allLists={allLists}
-            onAdd={onAddList}
-            onRemove={onRemoveList}
-            disabled={isEditing}
-            addListError={listError}
-          />
-        </div>
-      )}
     </li>
   );
 }

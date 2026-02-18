@@ -31,8 +31,6 @@ describe("ListsManager", () => {
         onCreateList={vi.fn()}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
     expect(
@@ -51,8 +49,6 @@ describe("ListsManager", () => {
         onCreateList={vi.fn()}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
     expect(
@@ -73,8 +69,6 @@ describe("ListsManager", () => {
         onCreateList={onCreateList}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
 
@@ -87,18 +81,30 @@ describe("ListsManager", () => {
     expect(onCreateList).toHaveBeenCalledWith("newlist", expect.any(String));
   });
 
-  it("shows error message when error prop is provided", () => {
+  it("shows error message when onCreateList rejects", async () => {
+    const user = userEvent.setup();
+    const onCreateList = vi
+      .fn()
+      .mockRejectedValue(new Error("list with this name already exists"));
+
     render(
       <ListsManager
         lists={[]}
-        onCreateList={vi.fn()}
+        onCreateList={onCreateList}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error="list with this name already exists"
-        onClearError={vi.fn()}
       />
     );
-    expect(screen.getByText("list with this name already exists")).toBeDefined();
+
+    await user.type(
+      screen.getByRole("textbox", { name: /nome da nova lista/i }),
+      "work"
+    );
+    await user.click(screen.getByRole("button", { name: /criar lista/i }));
+
+    expect(
+      screen.getByText("list with this name already exists")
+    ).toBeDefined();
   });
 
   it("disables create button when name is empty", () => {
@@ -108,8 +114,6 @@ describe("ListsManager", () => {
         onCreateList={vi.fn()}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
     const createBtn = screen.getByRole("button", { name: /criar lista/i });
@@ -124,8 +128,6 @@ describe("ListsManager", () => {
         onCreateList={vi.fn()}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
     await user.type(
@@ -143,8 +145,6 @@ describe("ListsManager", () => {
         onCreateList={vi.fn()}
         onUpdateList={vi.fn()}
         onDeleteList={vi.fn()}
-        error={null}
-        onClearError={vi.fn()}
       />
     );
     expect(

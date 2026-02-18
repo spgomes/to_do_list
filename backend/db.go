@@ -9,7 +9,6 @@ import (
 )
 
 const MaxTitleLength = 255
-const MaxTagNameLength = 50
 const MaxListNameLength = 50
 
 // DefaultListColor is used when migrating tags or when color is invalid.
@@ -28,10 +27,6 @@ var (
 	ErrAlreadyDeleted  = errors.New("todo already deleted")
 	ErrDuplicateEmail = errors.New("email already registered")
 	ErrUserNotFound    = errors.New("user not found")
-	ErrEmptyTagName    = errors.New("tag name cannot be empty")
-	ErrTagNameTooLong  = errors.New("tag name exceeds maximum length")
-	ErrDuplicateTag    = errors.New("tag with this name already exists")
-	ErrTagNotFound     = errors.New("tag not found")
 	ErrEmptyListName   = errors.New("list name cannot be empty")
 	ErrListNameTooLong = errors.New("list name exceeds maximum length")
 	ErrDuplicateList   = errors.New("list with this name already exists")
@@ -414,197 +409,6 @@ func DeleteTodo(db *sql.DB, id int64, userID int64) error {
 	return nil
 }
 
-// --- Tag CRUD Functions ---
-
-// ListTags returns all tags for a given user ordered by created_at DESC.
-func ListTags(db *sql.DB, userID int64) ([]Tag, error) {
-	rows, err := db.Query("SELECT id, name, created_at, user_id FROM tags WHERE user_id = ? ORDER BY created_at DESC", userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	tags := []Tag{}
-	for rows.Next() {
-		var t Tag
-		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.UserID); err != nil {
-			return nil, err
-		}
-		tags = append(tags, t)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return tags, nil
-}
-
-// CreateTag inserts a new tag with the given name for the given user and returns the created Tag.
-// Returns ErrEmptyTagName if the name is empty or whitespace-only.
-// Returns ErrTagNameTooLong if the name exceeds MaxTagNameLength.
-// Returns ErrDuplicateTag if a tag with the same name already exists for the user.
-func CreateTag(db *sql.DB, name string, userID int64) (Tag, error) {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return Tag{}, ErrEmptyTagName
-	}
-	if len(trimmed) > MaxTagNameLength {
-		return Tag{}, ErrTagNameTooLong
-	}
-
-	result, err := db.Exec("INSERT INTO tags (name, user_id) VALUES (?, ?)", trimmed, userID)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return Tag{}, ErrDuplicateTag
-		}
-		return Tag{}, err
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return Tag{}, err
-	}
-
-	var tag Tag
-	err = db.QueryRow("SELECT id, name, created_at, user_id FROM tags WHERE id = ?", id).
-		Scan(&tag.ID, &tag.Name, &tag.CreatedAt, &tag.UserID)
-	if err != nil {
-		return Tag{}, err
-	}
-
-	return tag, nil
-}
-
-// UpdateTagName updates the name of a tag by ID, scoped to the given user.
-// Returns ErrEmptyTagName if the name is empty, ErrTagNameTooLong if it exceeds max length,
-// ErrDuplicateTag if a tag with the new name already exists for the user,
-// and ErrTagNotFound if the tag does not exist or does not belong to the user.
-func UpdateTagName(db *sql.DB, tagID int64, name string, userID int64) error {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return ErrEmptyTagName
-	}
-	if len(trimmed) > MaxTagNameLength {
-		return ErrTagNameTooLong
-	}
-
-	result, err := db.Exec(
-		"UPDATE tags SET name = ? WHERE id = ? AND user_id = ?",
-		trimmed, tagID, userID,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return ErrDuplicateTag
-		}
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrTagNotFound
-	}
-
-	return nil
-}
-
-// DeleteTag removes a tag by ID, scoped to the given user.
-// Returns ErrTagNotFound if the tag does not exist or does not belong to the user.
-func DeleteTag(db *sql.DB, tagID int64, userID int64) error {
-	result, err := db.Exec("DELETE FROM tags WHERE id = ? AND user_id = ?", tagID, userID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrTagNotFound
-	}
-
-	return nil
-}
-
-// --- Todo-Tag Relationship Functions ---
-
-// AddTagToTodo associates a tag with a todo.
-// Returns ErrNotFound if the todo or tag does not exist, does not belong to the user, or the todo is deleted.
-// Returns nil if the association already exists (idempotent).
-func AddTagToTodo(db *sql.DB, todoID int64, tagID int64, userID int64) error {
-	// Verify that both todo and tag belong to the user
-	var todoExists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM todos WHERE id = ? AND user_id = ? AND deleted_at IS NULL)", todoID, userID).Scan(&todoExists)
-	if err != nil {
-		return err
-	}
-	if !todoExists {
-		return ErrNotFound
-	}
-
-	var tagExists bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM tags WHERE id = ? AND user_id = ?)", tagID, userID).Scan(&tagExists)
-	if err != nil {
-		return err
-	}
-	if !tagExists {
-		return ErrTagNotFound
-	}
-
-	// Insert the association (ignore if already exists due to PRIMARY KEY constraint)
-	_, err = db.Exec("INSERT OR IGNORE INTO todo_tags (todo_id, tag_id) VALUES (?, ?)", todoID, tagID)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// RemoveTagFromTodo removes the association between a tag and a todo.
-// Returns ErrNotFound if the association does not exist.
-func RemoveTagFromTodo(db *sql.DB, todoID int64, tagID int64, userID int64) error {
-	// Verify that both todo and tag belong to the user
-	var todoExists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM todos WHERE id = ? AND user_id = ? AND deleted_at IS NULL)", todoID, userID).Scan(&todoExists)
-	if err != nil {
-		return err
-	}
-	if !todoExists {
-		return ErrNotFound
-	}
-
-	var tagExists bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM tags WHERE id = ? AND user_id = ?)", tagID, userID).Scan(&tagExists)
-	if err != nil {
-		return err
-	}
-	if !tagExists {
-		return ErrTagNotFound
-	}
-
-	result, err := db.Exec("DELETE FROM todo_tags WHERE todo_id = ? AND tag_id = ?", todoID, tagID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
-}
-
 // --- List CRUD Functions ---
 
 // ListLists returns all lists for a given user ordered by created_at DESC.
@@ -919,43 +723,77 @@ func ListTodoLists(db *sql.DB, todoID int64, userID int64) ([]List, error) {
 	return lists, nil
 }
 
-// ListTodoTags returns all tags associated with a specific todo, scoped to the given user.
-// Returns ErrNotFound if the todo does not exist, does not belong to the user, or is deleted.
-func ListTodoTags(db *sql.DB, todoID int64, userID int64) ([]Tag, error) {
-	// Verify that the todo belongs to the user
-	var todoExists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM todos WHERE id = ? AND user_id = ? AND deleted_at IS NULL)", todoID, userID).Scan(&todoExists)
-	if err != nil {
-		return nil, err
+// CreateTodoInList creates a todo and atomically associates it with the given list.
+// Returns ErrListNotFound if the list does not exist or does not belong to the user.
+// Returns ErrEmptyTitle / ErrTitleTooLong for invalid titles.
+// Uses a transaction: if any step fails, the todo is not created.
+func CreateTodoInList(db *sql.DB, title string, listID int64, userID int64) (Todo, error) {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return Todo{}, ErrEmptyTitle
 	}
-	if !todoExists {
-		return nil, ErrNotFound
+	if len(trimmed) > MaxTitleLength {
+		return Todo{}, ErrTitleTooLong
 	}
 
-	rows, err := db.Query(`
-		SELECT t.id, t.name, t.created_at, t.user_id
-		FROM tags t
-		INNER JOIN todo_tags tt ON t.id = tt.tag_id
-		WHERE tt.todo_id = ? AND t.user_id = ?
-		ORDER BY t.created_at DESC
-	`, todoID, userID)
+	tx, err := db.Begin()
 	if err != nil {
-		return nil, err
+		return Todo{}, err
 	}
-	defer rows.Close()
-
-	tags := []Tag{}
-	for rows.Next() {
-		var t Tag
-		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedAt, &t.UserID); err != nil {
-			return nil, err
+	var txDone bool
+	defer func() {
+		if !txDone {
+			tx.Rollback()
 		}
-		tags = append(tags, t)
+	}()
+
+	// 1. Verify the list exists and belongs to the user
+	var listExists bool
+	err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM lists WHERE id = ? AND user_id = ?)", listID, userID).Scan(&listExists)
+	if err != nil {
+		return Todo{}, err
+	}
+	if !listExists {
+		err = ErrListNotFound
+		return Todo{}, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, err
+	// 2. Insert the todo
+	result, err := tx.Exec("INSERT INTO todos (title, user_id) VALUES (?, ?)", trimmed, userID)
+	if err != nil {
+		return Todo{}, err
 	}
 
-	return tags, nil
+	todoID, err := result.LastInsertId()
+	if err != nil {
+		return Todo{}, err
+	}
+
+	// 3. Associate the todo with the list
+	_, err = tx.Exec("INSERT INTO todo_lists (todo_id, list_id) VALUES (?, ?)", todoID, listID)
+	if err != nil {
+		return Todo{}, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return Todo{}, err
+	}
+	txDone = true
+
+	// 4. Return the created todo with its list populated
+	var todo Todo
+	err = db.QueryRow("SELECT id, title, completed, created_at, user_id FROM todos WHERE id = ?", todoID).
+		Scan(&todo.ID, &todo.Title, &todo.Completed, &todo.CreatedAt, &todo.UserID)
+	if err != nil {
+		return Todo{}, err
+	}
+
+	lists, err := ListTodoLists(db, todo.ID, userID)
+	if err != nil {
+		todo.Lists = nil
+	} else {
+		todo.Lists = lists
+	}
+
+	return todo, nil
 }

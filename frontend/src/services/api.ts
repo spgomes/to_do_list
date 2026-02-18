@@ -132,6 +132,18 @@ export async function deleteList(id: number): Promise<void> {
   return handleVoidResponse(response);
 }
 
+export async function createTodoInList(
+  listId: number,
+  title: string
+): Promise<Todo> {
+  const response = await fetch(`${API_BASE_URL}/lists/${listId}/todos`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ title }),
+  });
+  return handleResponse<Todo>(response);
+}
+
 export async function addListToTodo(
   todoId: number,
   listId: number
